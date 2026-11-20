@@ -3,6 +3,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}Plex General Ad-mission{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/enhancements.css">
 </head><body>
 <header class="topbar"><a class="brand" href="/"><span class="mark">GA</span><span>Plex General <em>Ad-mission</em></span></a>{% if user %}<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf }}"><span>{{ user }}</span><button class="ghost">Sign out</button></form>{% endif %}</header>
 <main>{% block content %}{% endblock %}</main>

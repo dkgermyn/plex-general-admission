@@ -74,6 +74,8 @@ async def require_form(request: Request) -> tuple[str, dict]:
 async def sync_once() -> dict:
     paths, active = resolver.effective(datetime.now(UTC))
     desired = ";".join(paths)
+    if db.state("managed") != "true":
+        return {"ok": True, "active": active, "paths": paths, "changed": False, "managed": False}
     if not settings.plex_token:
         db.set_state("sync_error", "Plex token is not configured")
         return {"ok": False, "active": active, "paths": paths, "error": "Plex token is not configured"}
@@ -104,7 +106,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.2.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -182,10 +184,13 @@ def index(request: Request, path: str = ""):
     with db.connect() as conn:
         collections = conn.execute("SELECT * FROM collections ORDER BY is_default DESC,name COLLATE NOCASE").fetchall()
         schedules = conn.execute("SELECT s.*,c.name collection_name FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY starts_at").fetchall()
+        trash = conn.execute("SELECT * FROM trash ORDER BY deleted_at DESC").fetchall()
+        selections = conn.execute("SELECT s.*,c.name collection_name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name,s.relative_path").fetchall()
     effective, active = resolver.effective(datetime.now(UTC))
     return templates.TemplateResponse(request, "index.html", {
         "user": user, "csrf": csrf(request), "path": path, "items": items,
-        "collections": collections, "schedules": schedules, "effective": effective, "active": active,
+        "collections": collections, "schedules": schedules, "trash": trash, "selections": selections,
+        "effective": effective, "active": active, "managed": db.state("managed") == "true",
         "sync_error": db.state("sync_error"),
     })
 
@@ -214,6 +219,15 @@ async def delete_item(request: Request):
     target = str(form["path"])
     files.delete(target)
     db.audit("trash", target, "ok", user)
+    await sync_once()
+    return RedirectResponse("/", 303)
+
+
+@app.post("/trash/{trash_id}/restore")
+async def restore_item(trash_id: int, request: Request):
+    user, _ = await require_form(request)
+    restored = files.restore(trash_id)
+    db.audit("restore", restored, "ok", user)
     await sync_once()
     return RedirectResponse("/", 303)
 
@@ -288,6 +302,19 @@ async def add_selection(collection_id: int, request: Request):
     return RedirectResponse("/", 303)
 
 
+@app.post("/selections/{selection_id}/delete")
+async def remove_selection(selection_id: int, request: Request):
+    user, _ = await require_form(request)
+    with db.connect() as conn:
+        row = conn.execute("SELECT relative_path FROM selections WHERE id=?", (selection_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Selection not found")
+        conn.execute("DELETE FROM selections WHERE id=?", (selection_id,))
+    db.audit("selection-remove", row["relative_path"], "ok", user)
+    await sync_once()
+    return RedirectResponse("/", 303)
+
+
 @app.post("/schedules")
 async def create_schedule(request: Request):
     user, form = await require_form(request)
@@ -303,11 +330,54 @@ async def create_schedule(request: Request):
     return RedirectResponse("/", 303)
 
 
+@app.post("/schedules/{schedule_id}/delete")
+async def delete_schedule(schedule_id: int, request: Request):
+    user, _ = await require_form(request)
+    with db.connect() as conn:
+        row = conn.execute("SELECT name FROM schedules WHERE id=?", (schedule_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Schedule not found")
+        conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+    db.audit("schedule-delete", row["name"], "ok", user)
+    await sync_once()
+    return RedirectResponse("/", 303)
+
+
 @app.post("/sync")
 async def manual_sync(request: Request):
     user, _ = await require_form(request)
     result = await sync_once()
     db.audit("plex-sync", ",".join(result["active"]), "ok" if result["ok"] else "failed", user)
+    return RedirectResponse("/", 303)
+
+
+@app.post("/setup/import")
+async def import_existing(request: Request):
+    user, _ = await require_form(request)
+    if db.state("managed") == "true":
+        raise HTTPException(409, "Plex preference is already managed")
+    if not settings.plex_token:
+        raise HTTPException(400, "Plex token is not configured")
+    current = plex.preferences().get(PREFERENCE, "")
+    paths = [value.strip() for value in current.split(";") if value.strip()]
+    imported = 0
+    with db.connect() as conn:
+        default = conn.execute("SELECT id FROM collections WHERE is_default=1").fetchone()
+        for plex_path in paths:
+            prefix = settings.plex_path_prefix + "/"
+            if not plex_path.startswith(prefix):
+                continue
+            relative = plex_path[len(prefix):]
+            try:
+                target = files.resolve(relative, must_exist=True)
+            except (UnsafePath, FileNotFoundError):
+                continue
+            if target.is_file():
+                conn.execute("INSERT OR IGNORE INTO selections(collection_id,relative_path,kind) VALUES(?,?,?)", (default["id"], relative, "file"))
+                imported += 1
+    db.set_state("managed", "true")
+    db.audit("takeover", "Plex preroll preference", "ok", user, f"imported={imported}")
+    await sync_once()
     return RedirectResponse("/", 303)
 
 

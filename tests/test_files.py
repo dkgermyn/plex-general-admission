@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+import errno
+from pathlib import Path
 
 import pytest
 
@@ -43,10 +45,26 @@ def test_trash_restore_and_expiry(store):
     with pytest.raises(FileNotFoundError): store.restore(second)
 
 
+def test_trash_falls_back_across_container_mounts(store, monkeypatch):
+    target = store.root / "cross-device.mp4"; target.write_bytes(b"video")
+    real_rename = Path.rename
+    calls = 0
+    def cross_device_once(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return real_rename(source, destination)
+    monkeypatch.setattr(Path, "rename", cross_device_once)
+    trash_id = store.delete("cross-device.mp4")
+    assert not target.exists()
+    assert store.restore(trash_id) == "cross-device.mp4"
+    assert target.read_bytes() == b"video"
+
+
 def test_recursive_video_resolution(store):
     (store.root / "Season" / "nested").mkdir(parents=True)
     (store.root / "Season" / "a.mp4").touch(); (store.root / "Season" / "nested" / "b.mkv").touch()
     (store.root / "Season" / "notes.txt").touch()
     assert {p.name for p in store.video_files("Season", True)} == {"a.mp4", "b.mkv"}
     assert {p.name for p in store.video_files("Season", False)} == {"a.mp4"}
-

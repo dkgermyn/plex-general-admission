@@ -3,6 +3,8 @@
 **Your pre-show, on cue.** Plex General Ad-mission is a self-hosted manager for
 organizing, previewing, uploading, and scheduling Plex pre-roll videos. 
 
+![Plex General Ad-mission interface demo](assets/demo.gif)
+
 ## Features
 
 - Browse nested folders with generated thumbnails and in-browser video previews.
@@ -104,4 +106,3 @@ pytest
 ```
 
 This project is not affiliated with or endorsed by Plex, Inc. or General Admission.
-

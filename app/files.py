@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import os
 import re
 import shutil
@@ -94,7 +95,7 @@ class FileStore:
         now = datetime.now(UTC)
         trash_name = f"{now:%Y%m%dT%H%M%S}-{uuid.uuid4().hex}-{src.name}"
         target = self.trash / trash_name
-        src.rename(target)
+        self._relocate(src, target)
         with self.db.connect() as db:
             cur = db.execute(
                 "INSERT INTO trash(trash_name,original_path,deleted_at,purge_after,is_folder) VALUES(?,?,?,?,?)",
@@ -112,9 +113,18 @@ class FileStore:
             if dest.exists():
                 raise FileExistsError(row["original_path"])
             dest.parent.mkdir(parents=True, exist_ok=True)
-            src.rename(dest)
+            self._relocate(src, dest)
             db.execute("DELETE FROM trash WHERE id=?", (trash_id,))
             return row["original_path"]
+
+    @staticmethod
+    def _relocate(source: Path, destination: Path) -> None:
+        try:
+            source.rename(destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            shutil.move(str(source), str(destination))
 
     def purge_expired(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
@@ -148,4 +158,3 @@ class FileStore:
                 check=True, timeout=60,
             )
         return output
-

@@ -1,0 +1,35 @@
+.takeover {
+  align-items: center;
+  background: #2e2414;
+  border: 1px solid #705729;
+  border-radius: .8rem;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 0 clamp(1rem, 4vw, 4rem) 1.5rem;
+  padding: 1.2rem;
+}
+.takeover p { color: #d5c5a8; margin: .25rem 0; }
+.selection {
+  align-items: center;
+  background: #0d0d11;
+  border-radius: .4rem;
+  color: var(--muted);
+  display: flex;
+  gap: .5rem;
+  justify-content: space-between;
+  margin-top: .5rem;
+  padding: .45rem .6rem;
+}
+.selection button { padding: .1rem .4rem; }
+.organize { border-top: 1px solid var(--line); margin: .7rem .8rem 0; padding-top: .5rem; }
+.organize summary { color: var(--muted); cursor: pointer; font-size: .8rem; }
+.organize input { background: #0d0d11; border: 1px solid var(--line); border-radius: .4rem; color: var(--text); margin-top: .4rem; padding: .4rem; width: 100%; }
+.organize button { margin-top: .4rem; width: 100%; }
+.calendar { background: var(--panel); border: 1px solid var(--line); border-radius: .8rem; margin-bottom: 2rem; overflow: hidden; }
+.calendar-head { align-items: center; display: flex; justify-content: space-between; padding: .8rem; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-grid > * { border-left: 1px solid var(--line); border-top: 1px solid var(--line); min-height: 78px; padding: .4rem; }
+.calendar-grid > b { color: var(--muted); min-height: auto; text-align: center; }
+.calendar-grid small { background: color-mix(in srgb, var(--event) 30%, transparent); border-left: 3px solid var(--event); display: block; margin-top: .3rem; overflow: hidden; padding: .2rem; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .takeover { align-items: flex-start; flex-direction: column; } }
