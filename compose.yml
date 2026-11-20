@@ -1,0 +1,19 @@
+services:
+  plex-general-admission:
+    image: ghcr.io/dkgermyn/plex-general-admission:latest
+    container_name: plex-general-admission
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ${PREROLL_HOST_PATH:-./prerolls}:/prerolls
+      - ${TRASH_HOST_PATH:-./trash}:/trash
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+

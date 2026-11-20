@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Sign in · Plex General Ad-mission{% endblock %}
+{% block content %}<section class="login-card"><div class="mark large">GA</div><p class="eyebrow">Now screening</p><h1>Plex General <em>Ad-mission</em></h1><p>Organize and schedule the show before the show.</p>
+{% if error %}<div class="alert">{% if error == 'denied' %}This Plex account is not an authorized administrator.{% else %}Plex sign-in could not be completed. Please try again.{% endif %}</div>{% endif %}
+<form method="post" action="/auth/start"><button class="primary">Continue with Plex</button></form></section>{% endblock %}

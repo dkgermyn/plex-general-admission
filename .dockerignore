@@ -1,0 +1,9 @@
+.git
+.github
+.env
+data
+prerolls
+trash
+__pycache__
+.pytest_cache
+
