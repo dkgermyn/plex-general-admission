@@ -1,8 +1,7 @@
 # Plex General Ad-mission
 
 **Your pre-show, on cue.** Plex General Ad-mission is a self-hosted manager for
-organizing, previewing, uploading, and scheduling Plex pre-roll videos. The name is
-a nod to movie tickets, pre-roll advertising, and the cannabis pre-roll brand.
+organizing, previewing, uploading, and scheduling Plex pre-roll videos. 
 
 ## Features
 
