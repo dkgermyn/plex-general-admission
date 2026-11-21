@@ -11,12 +11,32 @@ $$('[data-close]').forEach(button => button.addEventListener('click', () => butt
 $$('[data-confirm]').forEach(form => form.addEventListener('submit', event => {
   if (!confirm(form.dataset.confirm)) event.preventDefault();
 }));
-$$('[data-video]').forEach(button => button.addEventListener('click', event => {
-  event.stopPropagation();
-  const dialog = $('#video-dialog');
-  dialog.querySelector('video').src = button.dataset.video;
-  dialog.showModal();
-}));
+const videoDialog = $('#video-dialog');
+if (videoDialog) {
+  const video = $('video', videoDialog);
+  const stopPreview = () => {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  };
+  $$('[data-video]').forEach(button => button.addEventListener('click', event => {
+    event.stopPropagation();
+    stopPreview();
+    video.src = button.dataset.video;
+    videoDialog.showModal();
+  }));
+  videoDialog.addEventListener('close', stopPreview);
+  videoDialog.addEventListener('click', event => {
+    const bounds = videoDialog.getBoundingClientRect();
+    const outside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+    if (outside) videoDialog.close();
+  });
+  window.addEventListener('pagehide', stopPreview);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) return;
+    if (videoDialog.open) videoDialog.close(); else stopPreview();
+  });
+}
 
 const upload = $('#upload-input'), uploadForm = $('#upload-form'), drop = $('#drop-zone');
 if (upload) upload.addEventListener('change', () => uploadForm.requestSubmit());
