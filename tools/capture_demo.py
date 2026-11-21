@@ -1,6 +1,7 @@
 """Record the README demo against an auth-disabled synthetic-data instance."""
 
 import asyncio
+import re
 from pathlib import Path
 
 from playwright.async_api import async_playwright, expect
@@ -36,6 +37,7 @@ async def main() -> None:
         await page.locator(".preview").first.click()
         await page.wait_for_timeout(1700)
         await page.locator("#video-dialog [data-close]").click()
+        await expect(page.locator("#video-dialog video")).not_to_have_attribute("src", re.compile(".+"))
         await page.wait_for_timeout(500)
         await page.locator("a.brand").click()
         await page.locator('[data-tab="collections"]').click()

@@ -1,6 +1,7 @@
 import importlib
 import asyncio
 import re
+from pathlib import Path
 from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
@@ -17,6 +18,15 @@ def test_application_imports(monkeypatch, tmp_path):
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     module = importlib.import_module("app.main")
     assert module.app.title == "Plex General Ad-mission"
+
+
+def test_preview_cleanup_covers_mobile_exit_paths():
+    script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+    assert "video.pause()" in script
+    assert "video.removeAttribute('src')" in script
+    assert "videoDialog.addEventListener('close', stopPreview)" in script
+    assert "window.addEventListener('pagehide', stopPreview)" in script
+    assert "visibilitychange" in script
 
 
 def test_sync_does_not_touch_plex_before_takeover(monkeypatch, tmp_path):
