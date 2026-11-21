@@ -29,6 +29,17 @@ def test_preview_cleanup_covers_mobile_exit_paths():
     assert "visibilitychange" in script
 
 
+def test_v04_library_controls_cover_touch_filter_drag_and_uploads():
+    script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+    template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text()
+    assert "enterSelection(item)" in script
+    assert "data-library-search" in template
+    assert "preferenceKey('view')" in script
+    assert "addEventListener('drop'" in script
+    assert "request.upload.addEventListener('progress'" in script
+    assert "data-conflict-choice=\"keep_both\"" in template
+
+
 def test_sync_does_not_touch_plex_before_takeover(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setenv("PREROLL_ROOT", str(tmp_path / "prerolls"))
@@ -61,6 +72,14 @@ def test_bulk_move_collection_and_trash(monkeypatch, tmp_path):
     assert 'id="item-context-menu"' in page.text
     assert 'data-plex-prefix="/prerolls"' in page.text
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    (root / "Moved" / "one.mp4").write_bytes(b"conflict")
+    response = client.post("/bulk", data={
+        "csrf_token": csrf, "action": "move", "destination": "Moved",
+        "paths": ["one.mp4", "two.mp4"],
+    })
+    assert response.status_code == 409
+    assert (root / "one.mp4").exists() and (root / "two.mp4").exists()
+    (root / "Moved" / "one.mp4").unlink()
     response = client.post("/bulk", data={
         "csrf_token": csrf, "action": "move", "destination": "Moved",
         "paths": ["one.mp4", "two.mp4"],
@@ -82,3 +101,22 @@ def test_bulk_move_collection_and_trash(monkeypatch, tmp_path):
     })
     assert response.status_code == 200
     assert not (root / "Moved" / "one.mp4").exists()
+
+    (root / "upload.mp4").write_bytes(b"old")
+    response = client.post(
+        "/upload",
+        data={"csrf_token": csrf, "destination": "", "conflict": "error"},
+        files={"upload": ("upload.mp4", b"new", "video/mp4")},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert response.status_code == 409
+    assert (root / "upload.mp4").read_bytes() == b"old"
+    response = client.post(
+        "/upload",
+        data={"csrf_token": csrf, "destination": "", "conflict": "keep_both"},
+        files={"upload": ("upload.mp4", b"new", "video/mp4")},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert response.status_code == 200
+    assert response.json()["uploaded"] == ["upload (2).mp4"]
+    assert (root / "upload (2).mp4").read_bytes() == b"new"
