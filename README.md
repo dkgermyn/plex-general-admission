@@ -9,9 +9,12 @@ including mobile browser navigation and backgrounding.
 
 ## Features
 
-- Browse nested folders in large-thumbnail, small-thumbnail, compact-grid, or details views.
-- Sort and multi-select with familiar mouse, keyboard, touch, and context-menu interactions.
-- Upload by file picker or drag-and-drop; create, rename, move, trash, and restore items.
+- Browse and search nested folders in large-thumbnail, small-thumbnail, compact-grid, or details views.
+- Filter by item type, use expanded sorting, and remember view and sort choices separately per folder.
+- Multi-select with mouse, keyboard, or an explicit touch mode and mobile bulk-action toolbar.
+- Drag selected items into folders on desktop, with safe conflict detection before anything moves.
+- Upload by file picker or drag-and-drop with progress, failure states, and skip-or-keep-both conflict choices.
+- Create, rename, move, trash, and restore items with descriptive confirmations for destructive actions.
 - Build reusable collections from individual videos or dynamic recursive folders.
 - Schedule one-time, daily, weekly, monthly, or annual windows in your timezone.
 - Combine overlapping schedules and ask Plex to randomly choose one eligible video.

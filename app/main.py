@@ -107,7 +107,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.4.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -115,6 +115,11 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 @app.exception_handler(UnsafePath)
 def unsafe_path_handler(_: Request, exc: UnsafePath):
     return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.exception_handler(FileExistsError)
+def conflict_handler(_: Request, exc: FileExistsError):
+    return JSONResponse({"detail": "An item with that name already exists", "conflicts": [str(exc)]}, status_code=409)
 
 
 @app.get("/healthz")
@@ -237,6 +242,10 @@ async def bulk_items(request: Request):
             db.audit("trash", path, "ok", user, "bulk")
     elif action == "move":
         destination = str(form.get("destination", ""))
+        dest_dir = files.resolve(destination, must_exist=True)
+        conflicts = [path for path in paths if (dest_dir / files.resolve(path, must_exist=True).name).exists()]
+        if conflicts:
+            return JSONResponse({"detail": "Some items already exist in that folder", "conflicts": conflicts}, status_code=409)
         for path in paths:
             result = files.move(path, destination)
             db.audit("move", result, "ok", user, "bulk")
@@ -273,16 +282,48 @@ async def restore_item(trash_id: int, request: Request):
 
 
 @app.post("/upload")
-async def upload(request: Request, upload: list[UploadFile] = File(...), destination: str = Form(""), csrf_token: str = Form(...)):
+async def upload(
+    request: Request,
+    upload: list[UploadFile] = File(...),
+    destination: str = Form(""),
+    csrf_token: str = Form(...),
+    conflict: str = Form("error"),
+):
     user = require_user(request)
     if not secrets.compare_digest(csrf_token, str(request.session.get("csrf", ""))):
         raise HTTPException(403, "Invalid CSRF token")
     dest = files.resolve(destination, must_exist=True)
+    names = [files.validate_name(item.filename or "upload") for item in upload]
+    unsupported = [name for name in names if Path(name).suffix.casefold() not in {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".ts"}]
+    if unsupported:
+        return JSONResponse({"detail": "Only supported video files can be uploaded", "conflicts": unsupported}, status_code=415)
+    seen: set[str] = set()
+    existing = []
+    for name in names:
+        if (dest / name).exists() or name in seen:
+            existing.append(name)
+        seen.add(name)
+    if existing and conflict == "error":
+        return JSONResponse({"detail": "Some files already exist", "conflicts": existing}, status_code=409)
+    if conflict not in {"error", "skip", "keep_both"}:
+        raise HTTPException(400, "Unsupported conflict choice")
+    uploaded, skipped, reserved = [], [], {item.name for item in dest.iterdir()}
     for item in upload:
         name = files.validate_name(item.filename or "upload")
+        if name in reserved:
+            if conflict == "skip":
+                skipped.append(name)
+                continue
+            if conflict == "keep_both":
+                original = Path(name)
+                number = 2
+                while True:
+                    candidate = f"{original.stem} ({number}){original.suffix}"
+                    if candidate not in reserved:
+                        name = candidate
+                        break
+                    number += 1
         target, partial = dest / name, dest / f".{name}.{secrets.token_hex(6)}.part"
-        if target.exists():
-            raise HTTPException(409, f"{name} already exists")
         total = 0
         try:
             with partial.open("xb") as output:
@@ -291,13 +332,15 @@ async def upload(request: Request, upload: list[UploadFile] = File(...), destina
                     if total > settings.max_upload_bytes:
                         raise HTTPException(413, f"{name} exceeds the upload limit")
                     output.write(chunk)
-            if target.suffix.casefold() not in {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".ts"}:
-                raise HTTPException(415, f"{name} is not a supported video")
             partial.rename(target)
+            reserved.add(name)
+            uploaded.append(name)
             db.audit("upload", target.relative_to(files.root).as_posix(), "ok", user)
         finally:
             partial.unlink(missing_ok=True)
     await sync_once()
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"ok": True, "uploaded": uploaded, "skipped": skipped, "destination": destination})
     return RedirectResponse(f"/?path={quote(destination)}", 303)
 
 
