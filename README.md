@@ -7,7 +7,8 @@ organizing, previewing, uploading, and scheduling Plex pre-roll videos.
 
 ## Features
 
-- Browse nested folders with generated thumbnails and in-browser video previews.
+- Browse nested folders in large-thumbnail, small-thumbnail, compact-grid, or details views.
+- Sort and multi-select with familiar mouse, keyboard, touch, and context-menu interactions.
 - Upload by file picker or drag-and-drop; create, rename, move, trash, and restore items.
 - Build reusable collections from individual videos or dynamic recursive folders.
 - Schedule one-time, daily, weekly, monthly, or annual windows in your timezone.

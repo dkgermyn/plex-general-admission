@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.datastructures import FormData
 
 from .auth import PlexAuth
 from .config import Settings
@@ -63,9 +64,9 @@ def csrf(request: Request) -> str:
     return token
 
 
-async def require_form(request: Request) -> tuple[str, dict]:
+async def require_form(request: Request) -> tuple[str, FormData]:
     user = require_user(request)
-    form = dict(await request.form())
+    form = await request.form()
     if not secrets.compare_digest(str(form.get("csrf_token", "")), str(request.session.get("csrf", ""))):
         raise HTTPException(403, "Invalid CSRF token")
     return user, form
@@ -106,7 +107,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.3.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -191,7 +192,7 @@ def index(request: Request, path: str = ""):
         "user": user, "csrf": csrf(request), "path": path, "items": items,
         "collections": collections, "schedules": schedules, "trash": trash, "selections": selections,
         "effective": effective, "active": active, "managed": db.state("managed") == "true",
-        "sync_error": db.state("sync_error"),
+        "sync_error": db.state("sync_error"), "plex_prefix": settings.plex_path_prefix,
     })
 
 
@@ -219,6 +220,45 @@ async def delete_item(request: Request):
     target = str(form["path"])
     files.delete(target)
     db.audit("trash", target, "ok", user)
+    await sync_once()
+    return RedirectResponse("/", 303)
+
+
+@app.post("/bulk")
+async def bulk_items(request: Request):
+    user, form = await require_form(request)
+    paths = list(dict.fromkeys(str(value) for value in form.getlist("paths") if str(value)))
+    if not paths or len(paths) > 200:
+        raise HTTPException(400, "Select between 1 and 200 items")
+    action = str(form.get("action", ""))
+    if action == "trash":
+        for path in paths:
+            files.delete(path)
+            db.audit("trash", path, "ok", user, "bulk")
+    elif action == "move":
+        destination = str(form.get("destination", ""))
+        for path in paths:
+            result = files.move(path, destination)
+            db.audit("move", result, "ok", user, "bulk")
+    elif action == "collection":
+        try:
+            collection_id = int(str(form.get("collection_id", "")))
+        except ValueError as exc:
+            raise HTTPException(400, "Collection is required") from exc
+        with db.connect() as conn:
+            if not conn.execute("SELECT 1 FROM collections WHERE id=?", (collection_id,)).fetchone():
+                raise HTTPException(404, "Collection not found")
+            for path in paths:
+                target = files.resolve(path, must_exist=True)
+                kind = "folder" if target.is_dir() else "file"
+                conn.execute(
+                    "INSERT OR IGNORE INTO selections(collection_id,relative_path,kind) VALUES(?,?,?)",
+                    (collection_id, path, kind),
+                )
+        for path in paths:
+            db.audit("selection-add", path, "ok", user, "bulk")
+    else:
+        raise HTTPException(400, "Unsupported bulk action")
     await sync_once()
     return RedirectResponse("/", 303)
 

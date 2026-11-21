@@ -1,6 +1,6 @@
 [project]
 name = "plex-general-admission"
-version = "0.2.0"
+version = "0.3.0"
 description = "Plex General Ad-mission: organize, preview, and schedule Plex pre-roll videos."
 readme = "README.md"
 requires-python = ">=3.11"
