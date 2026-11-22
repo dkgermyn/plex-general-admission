@@ -13,7 +13,7 @@ PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS collections (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
-  is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+  color TEXT NOT NULL DEFAULT '#7c3aed', is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_default ON collections(is_default) WHERE is_default=1;
 CREATE TABLE IF NOT EXISTS selections (
@@ -60,9 +60,13 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as db:
             db.executescript(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(collections)").fetchall()}
+            if "color" not in columns:
+                db.execute("ALTER TABLE collections ADD COLUMN color TEXT NOT NULL DEFAULT '#7c3aed'")
+                db.execute("UPDATE collections SET color='#64748b' WHERE is_default=1")
             db.execute(
-                "INSERT OR IGNORE INTO collections(name,is_default,created_at) VALUES(?,?,?)",
-                ("Default", 1, datetime.now(UTC).isoformat()),
+                "INSERT OR IGNORE INTO collections(name,color,is_default,created_at) VALUES(?,?,?,?)",
+                ("Default", "#64748b", 1, datetime.now(UTC).isoformat()),
             )
 
     def state(self, key: str, default: str = "") -> str:
@@ -88,4 +92,3 @@ class Database:
             return parsed if isinstance(parsed, list) else []
         except json.JSONDecodeError:
             return []
-

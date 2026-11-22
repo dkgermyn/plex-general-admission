@@ -15,10 +15,11 @@ including mobile browser navigation and backgrounding.
 - Drag selected items into folders on desktop, with safe conflict detection before anything moves.
 - Upload by file picker or drag-and-drop with progress, failure states, and skip-or-keep-both conflict choices.
 - Create, rename, move, trash, and restore items with descriptive confirmations for destructive actions.
-- Build reusable collections from individual videos or dynamic recursive folders.
+- Build reusable, colour-coded collections from individual videos or dynamic recursive folders.
 - Edit collections in place, add multiple videos or folders from a searchable picker, and preview members without leaving the Collections tab.
-- See labeled collection tags on Library videos and filter by a collection or by unassigned videos.
-- Schedule one-time, daily, weekly, monthly, or annual windows in your timezone.
+- See matching colour-coded collection tags on Library videos and filter by a collection or by unassigned videos.
+- Schedule one-time, daily, weekly, monthly, annual, or custom recurring windows in an application timezone chosen in Settings.
+- Preview schedule and collection colours before saving, with readable high-contrast labels.
 - Edit schedules in place and see every active day of multi-day and recurring windows on the calendar.
 - Keep the selected Library, Collections, Schedule, or Trash tab after actions and page refreshes.
 - Combine overlapping schedules and ask Plex to randomly choose one eligible video.
@@ -74,9 +75,17 @@ enabling a schedule.
 
 ## Scheduling behavior
 
-Dates use `TZ`. A schedule has a start, end, collection, and optional RFC 5545-style
-recurrence rule. The UI offers daily, weekly, monthly, and yearly presets; advanced
-users can supply a compatible `RRULE`, such as `FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=1`.
+The initial application timezone comes from `TZ` and can then be changed from the
+Settings tab. The chosen IANA timezone is stored in the application database and is
+used by the scheduler and calendar regardless of the browser or host timezone.
+Changing it preserves existing wall-clock values: an existing midnight remains
+midnight, but is reinterpreted in the newly selected timezone.
+
+A schedule has a start, end, collection, and optional RFC 5545-style recurrence
+rule. The UI offers daily, weekly, monthly, and yearly presets. The advanced rule
+field is only shown for Custom, validates rules before saving, and cannot override a
+selected preset. A compatible custom rule could be
+`FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=1`.
 Calendar windows use an exclusive end: a December 1 to January 1 schedule appears on
 December 1 through 31. Recurring windows preserve their original duration, including
 windows that cross month or year boundaries.
