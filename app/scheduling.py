@@ -32,6 +32,23 @@ def schedule_active(row, now: datetime, timezone: str) -> bool:
     return occurrence not in exdates
 
 
+def schedule_overlaps(row, window_start: datetime, window_end: datetime, timezone: str) -> bool:
+    if not row["enabled"]:
+        return False
+    start = parse_local(row["starts_at"], timezone)
+    end = parse_local(row["ends_at"], timezone)
+    window_start = window_start.astimezone(ZoneInfo(timezone))
+    window_end = window_end.astimezone(ZoneInfo(timezone))
+    if not row["rrule"]:
+        return start < window_end and end > window_start
+    duration = end - start
+    occurrence = rrulestr(row["rrule"], dtstart=start).before(window_end, inc=False)
+    if occurrence is None or occurrence < start or occurrence + duration <= window_start:
+        return False
+    exdates = {parse_local(x, timezone) for x in Database.decode_exdates(row["exdates"])}
+    return occurrence not in exdates
+
+
 class Resolver:
     def __init__(self, db: Database, files: FileStore, timezone: str, plex_prefix: str):
         self.db, self.files, self.timezone, self.plex_prefix = db, files, timezone, plex_prefix
@@ -58,4 +75,3 @@ class Resolver:
                     resolved.update(path.relative_to(self.files.root).as_posix() for path in paths)
         plex_paths = [f"{self.plex_prefix}/{relative}" for relative in sorted(resolved, key=str.casefold)]
         return plex_paths, names
-

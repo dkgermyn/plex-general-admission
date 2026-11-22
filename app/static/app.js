@@ -111,15 +111,37 @@ if (drop) {
   ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('drag'); }));
   drop.addEventListener('drop', event => submitUpload(event.dataTransfer.files));
 }
-$$('[data-recurrence]').forEach(recurrence => recurrence.addEventListener('change', () => {
-  const rrule = $('[data-rrule]', recurrence.closest('form'));
-  if (recurrence.value !== 'custom') rrule.value = recurrence.value;
-}));
+const recurrenceLabels = { '': 'Does not repeat.', 'FREQ=DAILY': 'Repeats every day.', 'FREQ=WEEKLY': 'Repeats every week.', 'FREQ=MONTHLY': 'Repeats every month.', 'FREQ=YEARLY': 'Repeats every year.' };
+const updateRecurrence = recurrence => {
+  const form = recurrence.closest('form'), custom = $('[data-custom-rule]', form), rrule = $('[data-rrule]', form), summary = $('[data-recurrence-summary]', form);
+  const isCustom = recurrence.value === 'custom';
+  custom.hidden = !isCustom;
+  if (!isCustom) { rrule.value = recurrence.value; rrule.setCustomValidity(''); }
+  else rrule.setCustomValidity(rrule.value && !/^FREQ=/i.test(rrule.value.trim()) ? 'A custom rule must begin with FREQ=' : '');
+  summary.textContent = isCustom ? (rrule.value ? `Custom rule: ${rrule.value}` : 'Enter a custom recurrence rule.') : recurrenceLabels[recurrence.value];
+};
+$$('[data-recurrence]').forEach(recurrence => {
+  recurrence.addEventListener('change', () => updateRecurrence(recurrence));
+  $('[data-rrule]', recurrence.closest('form')).addEventListener('input', () => updateRecurrence(recurrence));
+  updateRecurrence(recurrence);
+});
+
+const colorText = value => {
+  const hex = value.replace('#', ''), red = parseInt(hex.slice(0, 2), 16), green = parseInt(hex.slice(2, 4), 16), blue = parseInt(hex.slice(4, 6), 16);
+  return 0.299 * red + 0.587 * green + 0.114 * blue > 160 ? '#17120a' : '#ffffff';
+};
+const updateColor = control => {
+  const input = $('input[type="color"]', control), preview = $('[data-color-preview]', control);
+  $('[data-color-value]', control).textContent = input.value.toUpperCase();
+  preview.style.setProperty('--chosen-color', input.value); preview.style.setProperty('--chosen-text', colorText(input.value));
+};
+$$('[data-color-control]').forEach(control => { $('input[type="color"]', control).addEventListener('input', () => updateColor(control)); updateColor(control); });
 
 $$('[data-edit-collection]').forEach(button => button.addEventListener('click', () => {
   const dialog = $('#edit-collection-dialog'), form = $('form', dialog);
   form.action = `/collections/${button.dataset.id}/edit`;
   form.elements.name.value = button.dataset.name; form.elements.description.value = button.dataset.description || '';
+  form.elements.color.value = button.dataset.color; updateColor($('[data-color-control]', form));
   dialog.showModal();
 }));
 $$('[data-add-members]').forEach(button => button.addEventListener('click', () => {
@@ -141,8 +163,21 @@ $$('[data-edit-schedule]').forEach(button => button.addEventListener('click', ()
   ['name', 'collection_id', 'starts_at', 'ends_at', 'rrule', 'color'].forEach(name => { if (form.elements[name]) form.elements[name].value = schedule[name] || ''; });
   const recurrence = $('[data-recurrence]', form), presets = ['', 'FREQ=DAILY', 'FREQ=WEEKLY', 'FREQ=MONTHLY', 'FREQ=YEARLY'];
   recurrence.value = presets.includes(schedule.rrule || '') ? (schedule.rrule || '') : 'custom';
+  updateRecurrence(recurrence); updateColor($('[data-color-control]', form));
   dialog.showModal();
 }));
+
+const zoneSelect = $('[data-timezone-select]'), zoneClock = $('[data-zone-clock]');
+const updateZonePreview = () => {
+  if (!zoneSelect) return;
+  const zone = zoneSelect.value;
+  $('[data-timezone-preview]').textContent = `December 1, 2026 at 12:00 AM in ${zone}`;
+};
+if (zoneSelect) { zoneSelect.addEventListener('change', updateZonePreview); updateZonePreview(); }
+if (zoneClock) {
+  const tick = () => { zoneClock.textContent = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: zoneClock.dataset.timezone, timeZoneName: 'short' }).format(new Date()); };
+  tick(); setInterval(tick, 1000);
+}
 
 const explorer = $('[data-explorer]');
 if (explorer) {
@@ -316,30 +351,16 @@ const calendarGrid = $('[data-calendar-grid]');
 if (calendarGrid) {
   let shown = new Date();
   const render = async () => {
-    const events = await fetch('/api/calendar').then(response => response.json()), year = shown.getFullYear(), month = shown.getMonth();
+    const year = shown.getFullYear(), month = shown.getMonth();
+    const result = await fetch(`/api/calendar?year=${year}&month=${month + 1}`).then(response => response.json()), events = result.events;
     const first = new Date(year, month, 1), last = new Date(year, month + 1, 0);
     $('[data-calendar-title]').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); calendarGrid.innerHTML = '';
     ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => calendarGrid.insertAdjacentHTML('beforeend', `<b>${day}</b>`));
     for (let index = 0; index < first.getDay(); index += 1) calendarGrid.insertAdjacentHTML('beforeend', '<div></div>');
-    const overlaps = (leftStart, leftEnd, rightStart, rightEnd) => leftStart < rightEnd && leftEnd > rightStart;
-    const occursOn = (event, dayStart) => {
-      const start = new Date(event.starts_at), end = new Date(event.ends_at), duration = end - start;
-      const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
-      const frequency = /FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/.exec(event.rrule || '')?.[1];
-      if (!frequency) return overlaps(start, end, dayStart, dayEnd);
-      const candidates = [];
-      if (frequency === 'YEARLY') for (const candidateYear of [dayStart.getFullYear(), dayStart.getFullYear() - 1]) candidates.push(new Date(candidateYear, start.getMonth(), start.getDate(), start.getHours(), start.getMinutes()));
-      if (frequency === 'MONTHLY') for (const offset of [0, -1]) candidates.push(new Date(dayStart.getFullYear(), dayStart.getMonth() + offset, start.getDate(), start.getHours(), start.getMinutes()));
-      if (frequency === 'WEEKLY' || frequency === 'DAILY') {
-        const period = frequency === 'WEEKLY' ? 7 * 86400000 : 86400000;
-        const count = Math.floor((dayStart - start) / period);
-        for (const offset of [count - 1, count, count + 1]) candidates.push(new Date(start.getTime() + offset * period));
-      }
-      return candidates.some(candidate => candidate >= start && overlaps(candidate, new Date(candidate.getTime() + duration), dayStart, dayEnd));
-    };
+    $('[data-calendar-zone]').textContent = result.timezone;
     for (let day = 1; day <= last.getDate(); day += 1) {
-      const date = new Date(year, month, day), cell = document.createElement('div'); cell.innerHTML = `<span>${day}</span>`;
-      events.forEach(event => { if (occursOn(event, date)) cell.insertAdjacentHTML('beforeend', `<small style="--event:${event.color}" title="${event.name}">${event.name}</small>`); });
+      const cell = document.createElement('div'), number = document.createElement('span'); number.textContent = day; cell.appendChild(number);
+      events.forEach(event => { if (event.days.includes(day)) { const label = document.createElement('small'); label.style.setProperty('--event', event.color); label.title = event.name; label.textContent = event.name; cell.appendChild(label); } });
       calendarGrid.appendChild(cell);
     }
   };

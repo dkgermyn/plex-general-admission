@@ -3,12 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import shutil
+from calendar import monthrange
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, available_timezones
+
+from dateutil.rrule import rrulestr
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -22,19 +27,57 @@ from .config import Settings
 from .db import Database
 from .files import FileStore, UnsafePath
 from .plex import PREFERENCE, PlexClient
-from .scheduling import Resolver
+from .scheduling import Resolver, schedule_overlaps
 
 BASE = Path(__file__).parent
 settings = Settings.from_env()
 settings.prepare()
 db = Database(settings.data_root / "app.db")
 db.initialize()
+if not db.state("timezone"):
+    db.set_state("timezone", settings.timezone)
 files = FileStore(settings.preroll_root, settings.trash_root, settings.data_root / "thumbnails", db, settings.trash_retention_days)
-resolver = Resolver(db, files, settings.timezone, settings.plex_path_prefix)
+resolver = Resolver(db, files, db.state("timezone", settings.timezone), settings.plex_path_prefix)
 plex = PlexClient(settings.plex_url, settings.plex_token)
 auth = PlexAuth(os.getenv("PLEX_AUTH_CLIENT_ID", "plex-general-admission"), "Plex General Ad-mission", settings.public_url)
 templates = Jinja2Templates(directory=BASE / "templates")
 templates.env.globals["dict"] = dict
+
+COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+def current_timezone() -> str:
+    value = db.state("timezone", settings.timezone)
+    try:
+        ZoneInfo(value)
+        return value
+    except Exception:
+        return settings.timezone
+
+
+def valid_color(value: str, fallback: str = "#7c3aed") -> str:
+    return value.lower() if COLOR.fullmatch(value) else fallback
+
+
+def contrast_text(value: str) -> str:
+    value = valid_color(value).lstrip("#")
+    red, green, blue = (int(value[index:index + 2], 16) for index in (0, 2, 4))
+    luminance = (0.299 * red + 0.587 * green + 0.114 * blue)
+    return "#17120a" if luminance > 160 else "#ffffff"
+
+
+templates.env.globals["contrast_text"] = contrast_text
+
+
+def validate_rrule(value: str, starts_at: str) -> str | None:
+    rule = value.strip().upper()
+    if not rule:
+        return None
+    if not rule.startswith("FREQ="):
+        raise HTTPException(400, "Recurrence rule must begin with FREQ=")
+    try:
+        rrulestr(rule, dtstart=datetime.fromisoformat(starts_at))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(400, "Recurrence rule is invalid") from exc
+    return rule
 
 
 def session_secret() -> str:
@@ -74,6 +117,7 @@ async def require_form(request: Request) -> tuple[str, FormData]:
 
 
 async def sync_once() -> dict:
+    resolver.timezone = current_timezone()
     paths, active = resolver.effective(datetime.now(UTC))
     desired = ";".join(paths)
     if db.state("managed") != "true":
@@ -108,7 +152,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.6.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -193,7 +237,7 @@ def index(request: Request, path: str = ""):
         schedules = conn.execute("SELECT s.*,c.name collection_name FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY starts_at").fetchall()
         trash = conn.execute("SELECT * FROM trash ORDER BY deleted_at DESC").fetchall()
         selections = conn.execute("SELECT s.*,c.name collection_name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name,s.relative_path").fetchall()
-        memberships = conn.execute("SELECT s.relative_path,c.id,c.name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name").fetchall()
+        memberships = conn.execute("SELECT s.relative_path,c.id,c.name,c.color FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name").fetchall()
     membership_map: dict[str, list[dict]] = {}
     for membership in memberships:
         membership_map.setdefault(membership["relative_path"], []).append(dict(membership))
@@ -204,12 +248,15 @@ def index(request: Request, path: str = ""):
         for selection in selection_rows:
             prefix = selection["relative_path"].rstrip("/") + "/"
             if selection["kind"] == "folder" and item_path.startswith(prefix):
-                assigned[selection["collection_id"]] = {"id": selection["collection_id"], "name": selection["collection_name"]}
+                collection = next((row for row in collections if row["id"] == selection["collection_id"]), None)
+                assigned[selection["collection_id"]] = {"id": selection["collection_id"], "name": selection["collection_name"], "color": collection["color"] if collection else "#7c3aed"}
         membership_map[item_path] = list(assigned.values())
     library_choices = []
     for target in sorted(files.root.rglob("*"), key=lambda value: value.as_posix().casefold()):
         if target.is_dir() or target.suffix.casefold() in {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".ts"}:
             library_choices.append({"path": target.relative_to(files.root).as_posix(), "kind": "folder" if target.is_dir() else "file"})
+    timezone = current_timezone()
+    resolver.timezone = timezone
     effective, active = resolver.effective(datetime.now(UTC))
     return templates.TemplateResponse(request, "index.html", {
         "user": user, "csrf": csrf(request), "path": path, "items": items,
@@ -217,6 +264,7 @@ def index(request: Request, path: str = ""):
         "effective": effective, "active": active, "managed": db.state("managed") == "true",
         "sync_error": db.state("sync_error"), "plex_prefix": settings.plex_path_prefix,
         "membership_map": membership_map, "library_choices": library_choices,
+        "timezone": timezone, "timezones": sorted(available_timezones()),
     })
 
 
@@ -392,8 +440,9 @@ async def create_collection(request: Request):
     name = str(form.get("name", "")).strip()
     if not name:
         raise HTTPException(400, "Collection name is required")
+    color = valid_color(str(form.get("color", "#7c3aed")))
     with db.connect() as conn:
-        conn.execute("INSERT INTO collections(name,description,is_default,created_at) VALUES(?,?,0,?)", (name, str(form.get("description", "")), datetime.now(UTC).isoformat()))
+        conn.execute("INSERT INTO collections(name,description,color,is_default,created_at) VALUES(?,?,?,0,?)", (name, str(form.get("description", "")), color, datetime.now(UTC).isoformat()))
     db.audit("collection-create", name, "ok", user)
     return tab_redirect("collections")
 
@@ -404,11 +453,12 @@ async def edit_collection(collection_id: int, request: Request):
     name = str(form.get("name", "")).strip()
     if not name:
         raise HTTPException(400, "Collection name is required")
+    color = valid_color(str(form.get("color", "#7c3aed")))
     with db.connect() as conn:
         row = conn.execute("SELECT name FROM collections WHERE id=?", (collection_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Collection not found")
-        conn.execute("UPDATE collections SET name=?,description=? WHERE id=?", (name, str(form.get("description", "")), collection_id))
+        conn.execute("UPDATE collections SET name=?,description=?,color=? WHERE id=?", (name, str(form.get("description", "")), color, collection_id))
     db.audit("collection-edit", name, "ok", user)
     await sync_once()
     return tab_redirect("collections")
@@ -468,14 +518,16 @@ async def remove_selection(selection_id: int, request: Request):
 @app.post("/schedules")
 async def create_schedule(request: Request):
     user, form = await require_form(request)
-    if datetime.fromisoformat(str(form["ends_at"])) <= datetime.fromisoformat(str(form["starts_at"])):
+    starts_at, ends_at = str(form["starts_at"]), str(form["ends_at"])
+    if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
         raise HTTPException(400, "Schedule end must be after its start")
+    rule = validate_rrule(str(form.get("rrule") or ""), starts_at)
     now = datetime.now(UTC).isoformat()
     with db.connect() as conn:
         conn.execute(
             "INSERT INTO schedules(name,description,color,collection_id,starts_at,ends_at,rrule,exdates,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)",
-            (str(form["name"]), str(form.get("description", "")), str(form.get("color", "#7c3aed")), int(form["collection_id"]),
-             str(form["starts_at"]), str(form["ends_at"]), str(form.get("rrule") or "") or None, "[]", now, now),
+            (str(form["name"]), str(form.get("description", "")), valid_color(str(form.get("color", "#7c3aed"))), int(form["collection_id"]),
+             starts_at, ends_at, rule, "[]", now, now),
         )
     db.audit("schedule-create", str(form["name"]), "ok", user)
     await sync_once()
@@ -488,14 +540,15 @@ async def edit_schedule(schedule_id: int, request: Request):
     starts_at, ends_at = str(form["starts_at"]), str(form["ends_at"])
     if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
         raise HTTPException(400, "Schedule end must be after its start")
+    rule = validate_rrule(str(form.get("rrule") or ""), starts_at)
     now = datetime.now(UTC).isoformat()
     with db.connect() as conn:
         if not conn.execute("SELECT 1 FROM schedules WHERE id=?", (schedule_id,)).fetchone():
             raise HTTPException(404, "Schedule not found")
         conn.execute(
             "UPDATE schedules SET name=?,description=?,color=?,collection_id=?,starts_at=?,ends_at=?,rrule=?,updated_at=? WHERE id=?",
-            (str(form["name"]), str(form.get("description", "")), str(form.get("color", "#7c3aed")), int(form["collection_id"]),
-             starts_at, ends_at, str(form.get("rrule") or "") or None, now, schedule_id),
+            (str(form["name"]), str(form.get("description", "")), valid_color(str(form.get("color", "#7c3aed"))), int(form["collection_id"]),
+             starts_at, ends_at, rule, now, schedule_id),
         )
     db.audit("schedule-edit", str(form["name"]), "ok", user)
     await sync_once()
@@ -521,6 +574,20 @@ async def manual_sync(request: Request):
     result = await sync_once()
     db.audit("plex-sync", ",".join(result["active"]), "ok" if result["ok"] else "failed", user)
     return tab_redirect("schedule")
+
+
+@app.post("/settings/timezone")
+async def update_timezone(request: Request):
+    user, form = await require_form(request)
+    timezone = str(form.get("timezone", ""))
+    if timezone not in available_timezones():
+        raise HTTPException(400, "Choose a valid IANA timezone")
+    previous = current_timezone()
+    db.set_state("timezone", timezone)
+    resolver.timezone = timezone
+    db.audit("timezone-change", timezone, "ok", user, f"previous={previous};wall-clock-times-preserved")
+    await sync_once()
+    return tab_redirect("settings")
 
 
 @app.post("/setup/import")
@@ -554,8 +621,22 @@ async def import_existing(request: Request):
 
 
 @app.get("/api/calendar")
-def calendar(request: Request):
+def calendar(request: Request, year: int, month: int):
     require_user(request)
+    if not 1 <= month <= 12 or not 1970 <= year <= 2200:
+        raise HTTPException(400, "Invalid calendar month")
     with db.connect() as conn:
-        rows = conn.execute("SELECT id,name,color,starts_at,ends_at,rrule,enabled FROM schedules ORDER BY starts_at").fetchall()
-    return [dict(row) for row in rows]
+        rows = conn.execute("SELECT id,name,color,starts_at,ends_at,rrule,exdates,enabled FROM schedules ORDER BY starts_at").fetchall()
+    timezone = current_timezone()
+    zone = ZoneInfo(timezone)
+    events = []
+    for row in rows:
+        days = []
+        for day in range(1, monthrange(year, month)[1] + 1):
+            start = datetime(year, month, day, tzinfo=zone)
+            if schedule_overlaps(row, start, start + timedelta(days=1), timezone):
+                days.append(day)
+        event = dict(row)
+        event["days"] = days
+        events.append(event)
+    return {"timezone": timezone, "events": events}

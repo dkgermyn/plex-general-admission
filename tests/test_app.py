@@ -40,17 +40,38 @@ def test_v04_library_controls_cover_touch_filter_drag_and_uploads():
     assert "data-conflict-choice=\"keep_both\"" in template
 
 
-def test_v05_management_ui_and_calendar_spans_are_present():
+def test_v06_management_ui_timezone_colors_and_recurrence_are_present():
     script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
     template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text()
     assert "activateTab(new URLSearchParams(location.search).get('tab')" in script
-    assert "const occursOn" in script
-    assert "candidateYear of [dayStart.getFullYear(), dayStart.getFullYear() - 1]" in script
+    assert "fetch(`/api/calendar?year=${year}&month=${month + 1}`)" in script
+    assert "custom.hidden = !isCustom" in script
+    assert "rrule.value = recurrence.value" in script
+    assert "A custom rule must begin with FREQ=" in script
     assert "data-edit-collection" in template
     assert "data-add-members" in template
     assert "data-edit-schedule" in template
     assert "data-collection-filter" in template
     assert "Unassigned" in template
+    assert 'data-tab="settings"' in template
+    assert 'action="/settings/timezone"' in template
+    assert "data-color-control" in template
+
+
+def test_existing_database_migrates_collection_colors(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE collections (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)")
+    connection.execute("INSERT INTO collections(name,is_default,created_at) VALUES('Default',1,'2026-01-01')")
+    connection.commit()
+    connection.close()
+    database = Database(path)
+    database.initialize()
+    with database.connect() as migrated:
+        row = migrated.execute("SELECT name,color FROM collections").fetchone()
+        assert dict(row) == {"name": "Default", "color": "#64748b"}
 
 
 def test_sync_does_not_touch_plex_before_takeover(monkeypatch, tmp_path):
