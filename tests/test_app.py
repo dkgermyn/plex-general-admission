@@ -40,6 +40,19 @@ def test_v04_library_controls_cover_touch_filter_drag_and_uploads():
     assert "data-conflict-choice=\"keep_both\"" in template
 
 
+def test_v05_management_ui_and_calendar_spans_are_present():
+    script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+    template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text()
+    assert "activateTab(new URLSearchParams(location.search).get('tab')" in script
+    assert "const occursOn" in script
+    assert "candidateYear of [dayStart.getFullYear(), dayStart.getFullYear() - 1]" in script
+    assert "data-edit-collection" in template
+    assert "data-add-members" in template
+    assert "data-edit-schedule" in template
+    assert "data-collection-filter" in template
+    assert "Unassigned" in template
+
+
 def test_sync_does_not_touch_plex_before_takeover(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setenv("PREROLL_ROOT", str(tmp_path / "prerolls"))
