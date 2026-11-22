@@ -34,6 +34,7 @@ resolver = Resolver(db, files, settings.timezone, settings.plex_path_prefix)
 plex = PlexClient(settings.plex_url, settings.plex_token)
 auth = PlexAuth(os.getenv("PLEX_AUTH_CLIENT_ID", "plex-general-admission"), "Plex General Ad-mission", settings.public_url)
 templates = Jinja2Templates(directory=BASE / "templates")
+templates.env.globals["dict"] = dict
 
 
 def session_secret() -> str:
@@ -107,7 +108,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.5.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -192,13 +193,38 @@ def index(request: Request, path: str = ""):
         schedules = conn.execute("SELECT s.*,c.name collection_name FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY starts_at").fetchall()
         trash = conn.execute("SELECT * FROM trash ORDER BY deleted_at DESC").fetchall()
         selections = conn.execute("SELECT s.*,c.name collection_name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name,s.relative_path").fetchall()
+        memberships = conn.execute("SELECT s.relative_path,c.id,c.name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name").fetchall()
+    membership_map: dict[str, list[dict]] = {}
+    for membership in memberships:
+        membership_map.setdefault(membership["relative_path"], []).append(dict(membership))
+    selection_rows = [dict(selection) for selection in selections]
+    for item in items:
+        item_path = item["path"]
+        assigned = {membership["id"]: membership for membership in membership_map.get(item_path, [])}
+        for selection in selection_rows:
+            prefix = selection["relative_path"].rstrip("/") + "/"
+            if selection["kind"] == "folder" and item_path.startswith(prefix):
+                assigned[selection["collection_id"]] = {"id": selection["collection_id"], "name": selection["collection_name"]}
+        membership_map[item_path] = list(assigned.values())
+    library_choices = []
+    for target in sorted(files.root.rglob("*"), key=lambda value: value.as_posix().casefold()):
+        if target.is_dir() or target.suffix.casefold() in {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".ts"}:
+            library_choices.append({"path": target.relative_to(files.root).as_posix(), "kind": "folder" if target.is_dir() else "file"})
     effective, active = resolver.effective(datetime.now(UTC))
     return templates.TemplateResponse(request, "index.html", {
         "user": user, "csrf": csrf(request), "path": path, "items": items,
         "collections": collections, "schedules": schedules, "trash": trash, "selections": selections,
         "effective": effective, "active": active, "managed": db.state("managed") == "true",
         "sync_error": db.state("sync_error"), "plex_prefix": settings.plex_path_prefix,
+        "membership_map": membership_map, "library_choices": library_choices,
     })
+
+
+def tab_redirect(tab: str, path: str = "") -> RedirectResponse:
+    query = f"?tab={quote(tab)}"
+    if path:
+        query += f"&path={quote(path)}"
+    return RedirectResponse(f"/{query}", 303)
 
 
 @app.post("/folders")
@@ -278,7 +304,7 @@ async def restore_item(trash_id: int, request: Request):
     restored = files.restore(trash_id)
     db.audit("restore", restored, "ok", user)
     await sync_once()
-    return RedirectResponse("/", 303)
+    return tab_redirect("trash")
 
 
 @app.post("/upload")
@@ -369,20 +395,61 @@ async def create_collection(request: Request):
     with db.connect() as conn:
         conn.execute("INSERT INTO collections(name,description,is_default,created_at) VALUES(?,?,0,?)", (name, str(form.get("description", "")), datetime.now(UTC).isoformat()))
     db.audit("collection-create", name, "ok", user)
-    return RedirectResponse("/", 303)
+    return tab_redirect("collections")
+
+
+@app.post("/collections/{collection_id}/edit")
+async def edit_collection(collection_id: int, request: Request):
+    user, form = await require_form(request)
+    name = str(form.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "Collection name is required")
+    with db.connect() as conn:
+        row = conn.execute("SELECT name FROM collections WHERE id=?", (collection_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Collection not found")
+        conn.execute("UPDATE collections SET name=?,description=? WHERE id=?", (name, str(form.get("description", "")), collection_id))
+    db.audit("collection-edit", name, "ok", user)
+    await sync_once()
+    return tab_redirect("collections")
+
+
+@app.post("/collections/{collection_id}/delete")
+async def delete_collection(collection_id: int, request: Request):
+    user, _ = await require_form(request)
+    with db.connect() as conn:
+        row = conn.execute("SELECT name,is_default FROM collections WHERE id=?", (collection_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Collection not found")
+        if row["is_default"]:
+            raise HTTPException(400, "The fallback collection cannot be deleted")
+        if conn.execute("SELECT 1 FROM schedules WHERE collection_id=? LIMIT 1", (collection_id,)).fetchone():
+            raise HTTPException(409, "Remove or reassign this collection's schedules before deleting it")
+        conn.execute("DELETE FROM collections WHERE id=?", (collection_id,))
+    db.audit("collection-delete", row["name"], "ok", user)
+    await sync_once()
+    return tab_redirect("collections")
 
 
 @app.post("/collections/{collection_id}/selections")
 async def add_selection(collection_id: int, request: Request):
     user, form = await require_form(request)
-    relative = str(form["path"])
-    target = files.resolve(relative, must_exist=True)
-    kind = "folder" if target.is_dir() else "file"
+    relatives = list(dict.fromkeys(str(value) for value in form.getlist("paths") if str(value)))
+    if not relatives and form.get("path"):
+        relatives = [str(form["path"])]
+    if not relatives:
+        raise HTTPException(400, "Choose at least one item")
     with db.connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO selections(collection_id,relative_path,kind) VALUES(?,?,?)", (collection_id, relative, kind))
-    db.audit("selection-add", relative, "ok", user)
+        if not conn.execute("SELECT 1 FROM collections WHERE id=?", (collection_id,)).fetchone():
+            raise HTTPException(404, "Collection not found")
+        for relative in relatives:
+            target = files.resolve(relative, must_exist=True)
+            kind = "folder" if target.is_dir() else "file"
+            conn.execute("INSERT OR IGNORE INTO selections(collection_id,relative_path,kind) VALUES(?,?,?)", (collection_id, relative, kind))
+    for relative in relatives:
+        db.audit("selection-add", relative, "ok", user)
     await sync_once()
-    return RedirectResponse("/", 303)
+    return tab_redirect("collections")
 
 
 @app.post("/selections/{selection_id}/delete")
@@ -395,12 +462,14 @@ async def remove_selection(selection_id: int, request: Request):
         conn.execute("DELETE FROM selections WHERE id=?", (selection_id,))
     db.audit("selection-remove", row["relative_path"], "ok", user)
     await sync_once()
-    return RedirectResponse("/", 303)
+    return tab_redirect("collections")
 
 
 @app.post("/schedules")
 async def create_schedule(request: Request):
     user, form = await require_form(request)
+    if datetime.fromisoformat(str(form["ends_at"])) <= datetime.fromisoformat(str(form["starts_at"])):
+        raise HTTPException(400, "Schedule end must be after its start")
     now = datetime.now(UTC).isoformat()
     with db.connect() as conn:
         conn.execute(
@@ -410,7 +479,27 @@ async def create_schedule(request: Request):
         )
     db.audit("schedule-create", str(form["name"]), "ok", user)
     await sync_once()
-    return RedirectResponse("/", 303)
+    return tab_redirect("schedule")
+
+
+@app.post("/schedules/{schedule_id}/edit")
+async def edit_schedule(schedule_id: int, request: Request):
+    user, form = await require_form(request)
+    starts_at, ends_at = str(form["starts_at"]), str(form["ends_at"])
+    if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
+        raise HTTPException(400, "Schedule end must be after its start")
+    now = datetime.now(UTC).isoformat()
+    with db.connect() as conn:
+        if not conn.execute("SELECT 1 FROM schedules WHERE id=?", (schedule_id,)).fetchone():
+            raise HTTPException(404, "Schedule not found")
+        conn.execute(
+            "UPDATE schedules SET name=?,description=?,color=?,collection_id=?,starts_at=?,ends_at=?,rrule=?,updated_at=? WHERE id=?",
+            (str(form["name"]), str(form.get("description", "")), str(form.get("color", "#7c3aed")), int(form["collection_id"]),
+             starts_at, ends_at, str(form.get("rrule") or "") or None, now, schedule_id),
+        )
+    db.audit("schedule-edit", str(form["name"]), "ok", user)
+    await sync_once()
+    return tab_redirect("schedule")
 
 
 @app.post("/schedules/{schedule_id}/delete")
@@ -423,7 +512,7 @@ async def delete_schedule(schedule_id: int, request: Request):
         conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
     db.audit("schedule-delete", row["name"], "ok", user)
     await sync_once()
-    return RedirectResponse("/", 303)
+    return tab_redirect("schedule")
 
 
 @app.post("/sync")
@@ -431,7 +520,7 @@ async def manual_sync(request: Request):
     user, _ = await require_form(request)
     result = await sync_once()
     db.audit("plex-sync", ",".join(result["active"]), "ok" if result["ok"] else "failed", user)
-    return RedirectResponse("/", 303)
+    return tab_redirect("schedule")
 
 
 @app.post("/setup/import")

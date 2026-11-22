@@ -22,6 +22,17 @@
   padding: .45rem .6rem;
 }
 .selection button { padding: .1rem .4rem; }
+.row-heading,.row > .actions { align-items: flex-start; display: flex; gap: .7rem; justify-content: space-between; }
+.collection-row { padding-bottom: 1rem; }
+.muted { color: var(--muted); }
+.file-kind { color: var(--amber); }
+.collection-tags { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .35rem; }
+.collection-tag { background: color-mix(in srgb,var(--violet) 28%,transparent); border: 1px solid color-mix(in srgb,var(--violet) 55%,transparent); border-radius: 1rem; color: #ddd2ff; font-size: .68rem; max-width: 100%; overflow: hidden; padding: .08rem .4rem; text-overflow: ellipsis; white-space: nowrap; }
+.collection-tag.unassigned { background: transparent; border-color: #555565; color: var(--muted); }
+.member-picker { background: #0d0d11; border: 1px solid var(--line); border-radius: .5rem; max-height: 320px; overflow: auto; padding: .35rem; }
+.member-picker label { align-items: center; display: flex; gap: .55rem; margin: 0; padding: .5rem; }
+.member-picker label:hover { background: #ffffff0b; }
+.member-picker input { display: inline; margin: 0; width: auto; }
 .organize { border-top: 1px solid var(--line); margin: .7rem .8rem 0; padding-top: .5rem; }
 .organize summary { color: var(--muted); cursor: pointer; font-size: .8rem; }
 .organize input { background: #0d0d11; border: 1px solid var(--line); border-radius: .4rem; color: var(--text); margin-top: .4rem; padding: .4rem; width: 100%; }
@@ -90,6 +101,7 @@ body:has(.explorer[data-view="details"]) .details-head { color: var(--muted); di
 .explorer[data-view="details"] .item-art { display: inline-grid; grid-column: 1; grid-row: 1; height: 36px; width: 48px; }
 .explorer[data-view="details"] .item-name { grid-column: 1; grid-row: 1; padding: 0 0 0 58px; }
 .explorer[data-view="details"] .item-name small { display: none; }
+.explorer[data-view="details"] .collection-tags { display: none; }
 .explorer[data-view="details"] .detail-kind,.explorer[data-view="details"] .detail-size,.explorer[data-view="details"] .detail-modified { color: var(--muted); display: block; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer[data-view="details"] .item-menu { position: static; }
 .explorer[data-view="details"] .folder-art { font-size: 1.1rem; }

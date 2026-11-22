@@ -1,11 +1,18 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-$$('[data-tab]').forEach(button => button.addEventListener('click', () => {
+const activateTab = name => {
   $$('[data-tab],.tab').forEach(element => element.classList.remove('active'));
+  const button = $(`[data-tab="${name}"]`);
+  if (!button || !document.getElementById(name)) return;
   button.classList.add('active');
-  document.getElementById(button.dataset.tab).classList.add('active');
+  document.getElementById(name).classList.add('active');
+};
+$$('[data-tab]').forEach(button => button.addEventListener('click', () => {
+  activateTab(button.dataset.tab);
+  const url = new URL(location.href); url.searchParams.set('tab', button.dataset.tab); history.replaceState({}, '', url);
 }));
+activateTab(new URLSearchParams(location.search).get('tab') || 'library');
 $$('[data-dialog]').forEach(button => button.addEventListener('click', () => document.getElementById(button.dataset.dialog).showModal()));
 $$('[data-close]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 const confirmDialog = $('#confirm-dialog');
@@ -104,14 +111,44 @@ if (drop) {
   ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('drag'); }));
   drop.addEventListener('drop', event => submitUpload(event.dataTransfer.files));
 }
-const recurrence = $('#recurrence'), rrule = $('#rrule');
-if (recurrence) recurrence.addEventListener('change', () => { if (recurrence.value !== 'custom') rrule.value = recurrence.value; });
+$$('[data-recurrence]').forEach(recurrence => recurrence.addEventListener('change', () => {
+  const rrule = $('[data-rrule]', recurrence.closest('form'));
+  if (recurrence.value !== 'custom') rrule.value = recurrence.value;
+}));
+
+$$('[data-edit-collection]').forEach(button => button.addEventListener('click', () => {
+  const dialog = $('#edit-collection-dialog'), form = $('form', dialog);
+  form.action = `/collections/${button.dataset.id}/edit`;
+  form.elements.name.value = button.dataset.name; form.elements.description.value = button.dataset.description || '';
+  dialog.showModal();
+}));
+$$('[data-add-members]').forEach(button => button.addEventListener('click', () => {
+  const dialog = $('#add-members-dialog'), form = $('form', dialog);
+  form.action = `/collections/${button.dataset.id}/selections`;
+  $('[data-collection-name]', dialog).textContent = button.dataset.name;
+  $$('input[type="checkbox"]', dialog).forEach(input => { input.checked = false; });
+  $('[data-member-search]', dialog).value = '';
+  $$('[data-choice-name]', dialog).forEach(choice => { choice.hidden = false; });
+  dialog.showModal();
+}));
+$('[data-member-search]')?.addEventListener('input', event => {
+  const query = event.target.value.trim().toLocaleLowerCase();
+  $$('[data-choice-name]', $('#add-members-dialog')).forEach(choice => { choice.hidden = !choice.dataset.choiceName.includes(query); });
+});
+$$('[data-edit-schedule]').forEach(button => button.addEventListener('click', () => {
+  const schedule = JSON.parse(button.dataset.schedule), dialog = $('#edit-schedule-dialog'), form = $('form', dialog);
+  form.action = `/schedules/${schedule.id}/edit`;
+  ['name', 'collection_id', 'starts_at', 'ends_at', 'rrule', 'color'].forEach(name => { if (form.elements[name]) form.elements[name].value = schedule[name] || ''; });
+  const recurrence = $('[data-recurrence]', form), presets = ['', 'FREQ=DAILY', 'FREQ=WEEKLY', 'FREQ=MONTHLY', 'FREQ=YEARLY'];
+  recurrence.value = presets.includes(schedule.rrule || '') ? (schedule.rrule || '') : 'custom';
+  dialog.showModal();
+}));
 
 const explorer = $('[data-explorer]');
 if (explorer) {
   const items = $$('.explorer-item', explorer), selected = new Set();
   const count = $('[data-selection-count]'), menu = $('#item-context-menu'), sort = $('[data-sort]');
-  const search = $('[data-library-search]'), filter = $('[data-filter]'), currentPath = explorer.dataset.currentPath || '/';
+  const search = $('[data-library-search]'), filter = $('[data-filter]'), collectionFilter = $('[data-collection-filter]'), currentPath = explorer.dataset.currentPath || '/';
   const coarsePointer = matchMedia('(pointer: coarse)').matches;
   let anchor = null, menuItem = null, longPress = null, selectionMode = false, suppressClick = false;
   const formatBytes = value => {
@@ -230,15 +267,17 @@ if (explorer) {
   $$('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
   setView(localStorage.getItem(preferenceKey('view')) || 'large');
   const applyFilter = () => {
-    const query = search.value.trim().toLocaleLowerCase(), kind = filter.value;
+    const query = search.value.trim().toLocaleLowerCase(), kind = filter.value, collection = collectionFilter.value;
     let visible = 0;
     items.forEach(item => {
-      const match = (!query || item.dataset.name.toLocaleLowerCase().includes(query)) && (kind === 'all' || item.dataset.kind === kind);
+      const memberships = (item.dataset.collections || '').split('|').filter(Boolean);
+      const collectionMatch = collection === 'all' || (collection === 'unassigned' ? item.dataset.kind === 'video' && !memberships.length : memberships.includes(collection));
+      const match = (!query || item.dataset.name.toLocaleLowerCase().includes(query)) && (kind === 'all' || item.dataset.kind === kind) && collectionMatch;
       item.hidden = !match; if (match) visible += 1;
     });
-    $('[data-filter-count]').textContent = query || kind !== 'all' ? `${visible} of ${items.length}` : `${items.length} items`;
+    $('[data-filter-count]').textContent = query || kind !== 'all' || collection !== 'all' ? `${visible} of ${items.length}` : `${items.length} items`;
   };
-  search.addEventListener('input', applyFilter); filter.addEventListener('change', applyFilter); applyFilter();
+  search.addEventListener('input', applyFilter); filter.addEventListener('change', applyFilter); collectionFilter.addEventListener('change', applyFilter); applyFilter();
   async function moveSelected(destination) {
     if (!selected.size) return;
     const form = $('#move-dialog form'); fillPaths(form); form.elements.destination.value = destination;
@@ -282,9 +321,25 @@ if (calendarGrid) {
     $('[data-calendar-title]').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); calendarGrid.innerHTML = '';
     ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => calendarGrid.insertAdjacentHTML('beforeend', `<b>${day}</b>`));
     for (let index = 0; index < first.getDay(); index += 1) calendarGrid.insertAdjacentHTML('beforeend', '<div></div>');
+    const overlaps = (leftStart, leftEnd, rightStart, rightEnd) => leftStart < rightEnd && leftEnd > rightStart;
+    const occursOn = (event, dayStart) => {
+      const start = new Date(event.starts_at), end = new Date(event.ends_at), duration = end - start;
+      const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
+      const frequency = /FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/.exec(event.rrule || '')?.[1];
+      if (!frequency) return overlaps(start, end, dayStart, dayEnd);
+      const candidates = [];
+      if (frequency === 'YEARLY') for (const candidateYear of [dayStart.getFullYear(), dayStart.getFullYear() - 1]) candidates.push(new Date(candidateYear, start.getMonth(), start.getDate(), start.getHours(), start.getMinutes()));
+      if (frequency === 'MONTHLY') for (const offset of [0, -1]) candidates.push(new Date(dayStart.getFullYear(), dayStart.getMonth() + offset, start.getDate(), start.getHours(), start.getMinutes()));
+      if (frequency === 'WEEKLY' || frequency === 'DAILY') {
+        const period = frequency === 'WEEKLY' ? 7 * 86400000 : 86400000;
+        const count = Math.floor((dayStart - start) / period);
+        for (const offset of [count - 1, count, count + 1]) candidates.push(new Date(start.getTime() + offset * period));
+      }
+      return candidates.some(candidate => candidate >= start && overlaps(candidate, new Date(candidate.getTime() + duration), dayStart, dayEnd));
+    };
     for (let day = 1; day <= last.getDate(); day += 1) {
       const date = new Date(year, month, day), cell = document.createElement('div'); cell.innerHTML = `<span>${day}</span>`;
-      events.forEach(event => { const start = new Date(event.starts_at), annual = (event.rrule || '').includes('YEARLY'); const same = annual ? start.getMonth() === month && start.getDate() === day : start.toDateString() === date.toDateString(); if (same) cell.insertAdjacentHTML('beforeend', `<small style="--event:${event.color}">${event.name}</small>`); });
+      events.forEach(event => { if (occursOn(event, date)) cell.insertAdjacentHTML('beforeend', `<small style="--event:${event.color}" title="${event.name}">${event.name}</small>`); });
       calendarGrid.appendChild(cell);
     }
   };

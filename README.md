@@ -16,7 +16,11 @@ including mobile browser navigation and backgrounding.
 - Upload by file picker or drag-and-drop with progress, failure states, and skip-or-keep-both conflict choices.
 - Create, rename, move, trash, and restore items with descriptive confirmations for destructive actions.
 - Build reusable collections from individual videos or dynamic recursive folders.
+- Edit collections in place, add multiple videos or folders from a searchable picker, and preview members without leaving the Collections tab.
+- See labeled collection tags on Library videos and filter by a collection or by unassigned videos.
 - Schedule one-time, daily, weekly, monthly, or annual windows in your timezone.
+- Edit schedules in place and see every active day of multi-day and recurring windows on the calendar.
+- Keep the selected Library, Collections, Schedule, or Trash tab after actions and page refreshes.
 - Combine overlapping schedules and ask Plex to randomly choose one eligible video.
 - Keep a Default collection for dates without an active scheduled season.
 - Authenticate through Plex and allow only named Plex administrators.
@@ -73,6 +77,9 @@ enabling a schedule.
 Dates use `TZ`. A schedule has a start, end, collection, and optional RFC 5545-style
 recurrence rule. The UI offers daily, weekly, monthly, and yearly presets; advanced
 users can supply a compatible `RRULE`, such as `FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=1`.
+Calendar windows use an exclusive end: a December 1 to January 1 schedule appears on
+December 1 through 31. Recurring windows preserve their original duration, including
+windows that cross month or year boundaries.
 
 All active schedules are combined and duplicate files removed. A folder selection is
 resolved recursively at evaluation time. If no schedule is active, Default is used.
