@@ -40,7 +40,22 @@
 .color-preview.schedule { border-left: 4px solid color-mix(in srgb,var(--chosen-color) 70%,white); border-radius: .25rem; }
 .schedule-zone,.timezone-preview { background: #17171d; border: 1px solid var(--line); border-radius: .65rem; color: var(--muted); margin-bottom: 1rem; padding: .75rem 1rem; }
 .schedule-zone strong,.timezone-preview strong { color: var(--text); }
+.play-inspector { align-items: center; background: linear-gradient(135deg,#17131f,#17171d); border: 1px solid #493568; border-radius: .8rem; display: grid; gap: 1rem; grid-template-columns: minmax(240px,1fr) auto; margin-bottom: 1rem; padding: 1rem; }
+.play-inspector h2,.play-inspector p { margin: .15rem 0; }
+.play-inspector form { align-items: end; display: flex; gap: .5rem; }
+.play-inspector form label { color: var(--muted); display: grid; font-size: .8rem; gap: .25rem; }
+.play-inspector input { background: #0d0d11; border: 1px solid var(--line); border-radius: .5rem; color: var(--text); padding: .6rem; }
+.inspector-result { display: grid; gap: .55rem; grid-column: 1 / -1; }
+[data-inspector-schedules] { display: flex; flex-wrap: wrap; gap: .4rem; }
+.muted-pill { opacity: .55; text-decoration: line-through; }
+.warning,.warning-pill { background: #4b2917; border: 1px solid #9f5b2d; color: #ffd7b0; }
+.warning { border-radius: .55rem; padding: .6rem; }
+.warning-pill { border-radius: 1rem; display: inline-block; font-size: .72rem; margin-left: .35rem; padding: .2rem .45rem; }
 .calendar-head [data-calendar-zone] { color: var(--muted); font-size: .8rem; }
+.calendar-legend { align-items: center; border-top: 1px solid var(--line); color: var(--muted); display: flex; flex-wrap: wrap; font-size: .78rem; gap: 1rem; padding: .55rem .8rem; }
+.legend-dot { border-radius: 50%; display: inline-block; height: .65rem; margin-right: .25rem; width: .65rem; }
+.legend-dot.conflict { background: #f59e0b; }
+.legend-dot.exclusive { background: #ef4444; }
 .recurrence-summary { background: #ffffff08; border-radius: .45rem; color: var(--muted); font-size: .8rem; padding: .55rem; }
 .settings-layout { display: grid; gap: 2rem; grid-template-columns: minmax(220px,1fr) minmax(320px,2fr); }
 .timezone-preview { display: grid; gap: .2rem; margin-top: 1rem; }
@@ -54,7 +69,15 @@
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
 .calendar-grid > * { border-left: 1px solid var(--line); border-top: 1px solid var(--line); min-height: 78px; padding: .4rem; }
 .calendar-grid > b { color: var(--muted); min-height: auto; text-align: center; }
-.calendar-grid small { background: color-mix(in srgb, var(--event) 30%, transparent); border-left: 3px solid var(--event); display: block; margin-top: .3rem; overflow: hidden; padding: .2rem; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-grid [data-calendar-date] { cursor: crosshair; position: relative; }
+.calendar-grid [data-calendar-date].selecting { background: #7c3aed30; box-shadow: inset 0 0 0 2px #9f7aea; }
+.calendar-grid [data-calendar-date].has-conflict::after { background: #f59e0b; border-radius: 50%; content: ''; height: 7px; position: absolute; right: 6px; top: 6px; width: 7px; }
+.calendar-grid [data-calendar-date].has-exclusive { box-shadow: inset 3px 0 #ef4444; }
+.calendar-event { background: color-mix(in srgb, var(--event) 30%, #17171d); border: 0; border-left: 3px solid var(--event); border-radius: .2rem; color: var(--text); display: flex; font-size: .72rem; gap: .2rem; justify-content: space-between; margin-top: .3rem; overflow: hidden; padding: .2rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.calendar-event:hover { filter: brightness(1.2); }
+.calendar-event.empty-event { outline: 1px dashed #f59e0b; }
+.event-handle { cursor: ew-resize; flex: 0 0 auto; font-weight: 900; }
+.schedule-row { border-left-color: var(--accent); }
 @media (max-width: 760px) { .takeover { align-items: flex-start; flex-direction: column; } }
 
 .breadcrumbs { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .25rem; }
@@ -139,6 +162,10 @@ dialog select { background: #0d0d11; border: 1px solid var(--line); border-radiu
 }
 
 @media (max-width: 760px) {
+  .play-inspector { grid-template-columns: 1fr; }
+  .play-inspector form { align-items: stretch; flex-direction: column; }
+  .calendar { overflow-x: auto; }
+  .calendar-grid { min-width: 760px; }
   .settings-layout { grid-template-columns: 1fr; }
   .color-control { grid-template-columns: 52px 1fr; }
   .color-preview { grid-column: 1 / -1; }

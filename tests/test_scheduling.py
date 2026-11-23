@@ -51,3 +51,34 @@ def test_overlap_union_and_default_fallback(tmp_path):
     resolver = Resolver(db, files, "UTC", "/prerolls")
     assert resolver.effective(now) == (["/prerolls/A/a.mp4", "/prerolls/B/b.mkv"], ["A", "B"])
     assert resolver.effective(datetime(2026, 11, 1, tzinfo=UTC))[0] == ["/prerolls/default.mp4"]
+
+
+def test_exclusive_priority_suppresses_only_lower_priorities(tmp_path):
+    db, files = setup(tmp_path)
+    now = datetime(2026, 12, 10, tzinfo=UTC)
+    with db.connect() as conn:
+        for name, priority, policy in (("Low", 0, "combine"), ("Exclusive", 10, "exclusive"), ("High", 20, "combine")):
+            folder = files.root / name; folder.mkdir(); (folder / f"{name}.mp4").touch()
+            collection_id = conn.execute("INSERT INTO collections(name,created_at) VALUES(?,?)", (name, now.isoformat())).lastrowid
+            conn.execute("INSERT INTO selections(collection_id,relative_path,kind) VALUES(?,?,?)", (collection_id, name, "folder"))
+            conn.execute(
+                "INSERT INTO schedules(name,collection_id,starts_at,ends_at,priority,overlap_policy,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)",
+                (name, collection_id, "2026-12-01T00:00", "2026-12-26T00:00", priority, policy, now.isoformat(), now.isoformat()),
+            )
+    resolver = Resolver(db, files, "UTC", "/prerolls")
+    inspection = resolver.inspect(now)
+    assert inspection["conflict"] is True
+    assert inspection["exclusive_cutoff"] == 10
+    assert inspection["paths"] == ["/prerolls/Exclusive/Exclusive.mp4", "/prerolls/High/High.mp4"]
+    assert {row["name"]: row["selected"] for row in inspection["schedules"]} == {"High": True, "Exclusive": True, "Low": False}
+
+
+def test_inspector_warns_when_selected_collection_is_empty(tmp_path):
+    db, files = setup(tmp_path)
+    now = datetime(2026, 12, 10, tzinfo=UTC)
+    with db.connect() as conn:
+        collection_id = conn.execute("INSERT INTO collections(name,created_at) VALUES('Empty',?)", (now.isoformat(),)).lastrowid
+        conn.execute("INSERT INTO schedules(name,collection_id,starts_at,ends_at,enabled,created_at,updated_at) VALUES('Empty season',?,?,?,1,?,?)", (collection_id, "2026-12-01T00:00", "2026-12-26T00:00", now.isoformat(), now.isoformat()))
+    inspection = Resolver(db, files, "UTC", "/prerolls").inspect(now)
+    assert inspection["empty_collections"] == ["Empty"]
+    assert inspection["paths"] == []

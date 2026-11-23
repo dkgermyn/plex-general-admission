@@ -21,6 +21,9 @@ including mobile browser navigation and backgrounding.
 - Schedule one-time, daily, weekly, monthly, annual, or custom recurring windows in an application timezone chosen in Settings.
 - Preview schedule and collection colours before saving, with readable high-contrast labels.
 - Edit schedules in place and see every active day of multi-day and recurring windows on the calendar.
+- Drag across calendar days to create schedules, click events to edit them, and resize one-time schedule boundaries.
+- Inspect what will play now or at a future date, including eligible-video counts and empty-collection warnings.
+- Explain overlapping schedules with priorities and Combine or Exclusive resolution policies.
 - Keep the selected Library, Collections, Schedule, or Trash tab after actions and page refreshes.
 - Combine overlapping schedules and ask Plex to randomly choose one eligible video.
 - Keep a Default collection for dates without an active scheduled season.
@@ -91,7 +94,12 @@ December 1 through 31. Recurring windows preserve their original duration, inclu
 windows that cross month or year boundaries.
 
 All active schedules are combined and duplicate files removed. A folder selection is
-resolved recursively at evaluation time. If no schedule is active, Default is used.
+resolved recursively at evaluation time. Each schedule has a priority and an overlap
+policy. Combine schedules merge as before. If any active schedule is Exclusive, the
+highest active Exclusive priority becomes a cutoff: schedules below it are suppressed,
+while schedules at the same or a higher priority remain eligible. The playback
+inspector uses the same resolver as Plex synchronization and explains the result for
+any chosen date and time. If no schedule is active, Default is used.
 Plex receives stable, alphabetically ordered paths separated by semicolons, causing
 it to choose one at random. The scheduler re-evaluates at least once per minute and
 after changes. Failed syncs never clear the last valid Plex value.
