@@ -58,12 +58,27 @@ def test_v06_management_ui_timezone_colors_and_recurrence_are_present():
     assert "data-color-control" in template
 
 
+def test_v07_schedule_intelligence_ui_is_present():
+    script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+    template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text()
+    assert "data-play-inspector" in template
+    assert "data-new-schedule" in template
+    assert 'name="overlap_policy"' in template
+    assert 'name="priority"' in template
+    assert "createFromSelection" in script
+    assert "calendar-event-span" in script
+    assert "laneCounts" in script
+    assert "/bounds" in script
+    assert "openScheduleEditor(schedule)" in script
+
+
 def test_existing_database_migrates_collection_colors(tmp_path):
     import sqlite3
 
     path = tmp_path / "legacy.db"
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE collections (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)")
+    connection.execute("CREATE TABLE schedules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#7c3aed', collection_id INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, rrule TEXT, exdates TEXT NOT NULL DEFAULT '[]', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
     connection.execute("INSERT INTO collections(name,is_default,created_at) VALUES('Default',1,'2026-01-01')")
     connection.commit()
     connection.close()
@@ -72,6 +87,8 @@ def test_existing_database_migrates_collection_colors(tmp_path):
     with database.connect() as migrated:
         row = migrated.execute("SELECT name,color FROM collections").fetchone()
         assert dict(row) == {"name": "Default", "color": "#64748b"}
+        schedule_columns = {column["name"] for column in migrated.execute("PRAGMA table_info(schedules)")}
+        assert {"priority", "overlap_policy"} <= schedule_columns
 
 
 def test_sync_does_not_touch_plex_before_takeover(monkeypatch, tmp_path):
@@ -96,7 +113,11 @@ def test_bulk_move_collection_and_trash(monkeypatch, tmp_path):
     store = FileStore(root, trash, thumbs, database)
     monkeypatch.setattr(module, "db", database)
     monkeypatch.setattr(module, "files", store)
-    monkeypatch.setattr(module, "resolver", Mock(effective=lambda now: ([], ["Default"])))
+    monkeypatch.setattr(module, "resolver", Mock(
+        effective=lambda now: ([], ["Default"]),
+        inspect=lambda now: {"explanation": "Fallback", "paths": [], "schedules": [], "empty_collections": []},
+        collection_paths=lambda connection, collection_id: [],
+    ))
     for name in ("one.mp4", "two.mp4", "three.mp4"):
         (root / name).write_bytes(b"video")
     client = TestClient(module.app)

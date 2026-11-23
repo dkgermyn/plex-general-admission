@@ -80,6 +80,16 @@ def validate_rrule(value: str, starts_at: str) -> str | None:
     return rule
 
 
+def validate_priority(value: str) -> int:
+    try:
+        priority = int(value)
+    except ValueError as exc:
+        raise HTTPException(400, "Priority must be a whole number") from exc
+    if not -100 <= priority <= 100:
+        raise HTTPException(400, "Priority must be between -100 and 100")
+    return priority
+
+
 def session_secret() -> str:
     configured = os.getenv("SESSION_SECRET", "")
     if configured:
@@ -152,7 +162,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Plex General Ad-mission", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Plex General Ad-mission", version="0.7.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(), https_only=settings.cookie_secure, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
@@ -234,10 +244,11 @@ def index(request: Request, path: str = ""):
     items = files.list(path)
     with db.connect() as conn:
         collections = conn.execute("SELECT * FROM collections ORDER BY is_default DESC,name COLLATE NOCASE").fetchall()
-        schedules = conn.execute("SELECT s.*,c.name collection_name FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY starts_at").fetchall()
+        schedules = conn.execute("SELECT s.*,c.name collection_name,c.color collection_color FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY s.priority DESC,s.starts_at").fetchall()
         trash = conn.execute("SELECT * FROM trash ORDER BY deleted_at DESC").fetchall()
         selections = conn.execute("SELECT s.*,c.name collection_name FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name,s.relative_path").fetchall()
         memberships = conn.execute("SELECT s.relative_path,c.id,c.name,c.color FROM selections s JOIN collections c ON c.id=s.collection_id ORDER BY c.name").fetchall()
+        collection_counts = {collection["id"]: len(resolver.collection_paths(conn, collection["id"])) for collection in collections}
     membership_map: dict[str, list[dict]] = {}
     for membership in memberships:
         membership_map.setdefault(membership["relative_path"], []).append(dict(membership))
@@ -258,6 +269,7 @@ def index(request: Request, path: str = ""):
     timezone = current_timezone()
     resolver.timezone = timezone
     effective, active = resolver.effective(datetime.now(UTC))
+    now_inspection = resolver.inspect(datetime.now(UTC))
     return templates.TemplateResponse(request, "index.html", {
         "user": user, "csrf": csrf(request), "path": path, "items": items,
         "collections": collections, "schedules": schedules, "trash": trash, "selections": selections,
@@ -265,6 +277,7 @@ def index(request: Request, path: str = ""):
         "sync_error": db.state("sync_error"), "plex_prefix": settings.plex_path_prefix,
         "membership_map": membership_map, "library_choices": library_choices,
         "timezone": timezone, "timezones": sorted(available_timezones()),
+        "collection_counts": collection_counts, "now_inspection": now_inspection,
     })
 
 
@@ -522,12 +535,16 @@ async def create_schedule(request: Request):
     if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
         raise HTTPException(400, "Schedule end must be after its start")
     rule = validate_rrule(str(form.get("rrule") or ""), starts_at)
+    priority = validate_priority(str(form.get("priority", "0")))
+    overlap_policy = str(form.get("overlap_policy", "combine"))
+    if overlap_policy not in {"combine", "exclusive"}:
+        raise HTTPException(400, "Unsupported overlap policy")
     now = datetime.now(UTC).isoformat()
     with db.connect() as conn:
         conn.execute(
-            "INSERT INTO schedules(name,description,color,collection_id,starts_at,ends_at,rrule,exdates,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)",
+            "INSERT INTO schedules(name,description,color,collection_id,starts_at,ends_at,rrule,exdates,priority,overlap_policy,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)",
             (str(form["name"]), str(form.get("description", "")), valid_color(str(form.get("color", "#7c3aed"))), int(form["collection_id"]),
-             starts_at, ends_at, rule, "[]", now, now),
+             starts_at, ends_at, rule, "[]", priority, overlap_policy, now, now),
         )
     db.audit("schedule-create", str(form["name"]), "ok", user)
     await sync_once()
@@ -541,18 +558,40 @@ async def edit_schedule(schedule_id: int, request: Request):
     if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
         raise HTTPException(400, "Schedule end must be after its start")
     rule = validate_rrule(str(form.get("rrule") or ""), starts_at)
+    priority = validate_priority(str(form.get("priority", "0")))
+    overlap_policy = str(form.get("overlap_policy", "combine"))
+    if overlap_policy not in {"combine", "exclusive"}:
+        raise HTTPException(400, "Unsupported overlap policy")
     now = datetime.now(UTC).isoformat()
     with db.connect() as conn:
         if not conn.execute("SELECT 1 FROM schedules WHERE id=?", (schedule_id,)).fetchone():
             raise HTTPException(404, "Schedule not found")
         conn.execute(
-            "UPDATE schedules SET name=?,description=?,color=?,collection_id=?,starts_at=?,ends_at=?,rrule=?,updated_at=? WHERE id=?",
+            "UPDATE schedules SET name=?,description=?,color=?,collection_id=?,starts_at=?,ends_at=?,rrule=?,priority=?,overlap_policy=?,updated_at=? WHERE id=?",
             (str(form["name"]), str(form.get("description", "")), valid_color(str(form.get("color", "#7c3aed"))), int(form["collection_id"]),
-             starts_at, ends_at, rule, now, schedule_id),
+             starts_at, ends_at, rule, priority, overlap_policy, now, schedule_id),
         )
     db.audit("schedule-edit", str(form["name"]), "ok", user)
     await sync_once()
     return tab_redirect("schedule")
+
+
+@app.post("/schedules/{schedule_id}/bounds")
+async def resize_schedule(schedule_id: int, request: Request):
+    user, form = await require_form(request)
+    starts_at, ends_at = str(form["starts_at"]), str(form["ends_at"])
+    if datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
+        raise HTTPException(400, "Schedule end must be after its start")
+    with db.connect() as conn:
+        row = conn.execute("SELECT name,rrule FROM schedules WHERE id=?", (schedule_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Schedule not found")
+        if row["rrule"]:
+            raise HTTPException(409, "Recurring schedule boundaries must be changed in Edit")
+        conn.execute("UPDATE schedules SET starts_at=?,ends_at=?,updated_at=? WHERE id=?", (starts_at, ends_at, datetime.now(UTC).isoformat(), schedule_id))
+    db.audit("schedule-resize", row["name"], "ok", user, f"{starts_at}->{ends_at}")
+    await sync_once()
+    return JSONResponse({"ok": True, "starts_at": starts_at, "ends_at": ends_at})
 
 
 @app.post("/schedules/{schedule_id}/delete")
@@ -626,7 +665,8 @@ def calendar(request: Request, year: int, month: int):
     if not 1 <= month <= 12 or not 1970 <= year <= 2200:
         raise HTTPException(400, "Invalid calendar month")
     with db.connect() as conn:
-        rows = conn.execute("SELECT id,name,color,starts_at,ends_at,rrule,exdates,enabled FROM schedules ORDER BY starts_at").fetchall()
+        rows = conn.execute("SELECT s.id,s.name,s.color,s.collection_id,c.name collection_name,s.starts_at,s.ends_at,s.rrule,s.exdates,s.priority,s.overlap_policy,s.enabled FROM schedules s JOIN collections c ON c.id=s.collection_id ORDER BY s.priority DESC,s.starts_at").fetchall()
+        collection_counts = {row["collection_id"]: len(resolver.collection_paths(conn, row["collection_id"])) for row in rows}
     timezone = current_timezone()
     zone = ZoneInfo(timezone)
     events = []
@@ -638,5 +678,38 @@ def calendar(request: Request, year: int, month: int):
                 days.append(day)
         event = dict(row)
         event["days"] = days
+        event["video_count"] = collection_counts[row["collection_id"]]
+        event["start_day"], event["end_day"] = None, None
+        if not row["rrule"]:
+            local_start = datetime.fromisoformat(row["starts_at"])
+            local_end = datetime.fromisoformat(row["ends_at"]) - timedelta(microseconds=1)
+            if (local_start.year, local_start.month) == (year, month):
+                event["start_day"] = local_start.day
+            if (local_end.year, local_end.month) == (year, month):
+                event["end_day"] = local_end.day
         events.append(event)
-    return {"timezone": timezone, "events": events}
+    day_status = {}
+    for day in range(1, monthrange(year, month)[1] + 1):
+        instant = datetime(year, month, day, 12, tzinfo=zone)
+        active_rows = [row for row in rows if schedule_overlaps(row, instant, instant + timedelta(seconds=1), timezone)]
+        exclusive = [row for row in active_rows if row["overlap_policy"] == "exclusive"]
+        cutoff = max((row["priority"] for row in exclusive), default=None)
+        day_status[str(day)] = {"conflict": len(active_rows) > 1, "active": len(active_rows), "exclusive_cutoff": cutoff}
+    return {"timezone": timezone, "events": events, "day_status": day_status}
+
+
+@app.get("/api/inspect")
+def inspect_playback(request: Request, at: str | None = None):
+    require_user(request)
+    timezone = current_timezone()
+    resolver.timezone = timezone
+    if at:
+        try:
+            moment = datetime.fromisoformat(at)
+        except ValueError as exc:
+            raise HTTPException(400, "Choose a valid date and time") from exc
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=ZoneInfo(timezone))
+    else:
+        moment = datetime.now(UTC)
+    return resolver.inspect(moment)

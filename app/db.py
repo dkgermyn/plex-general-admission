@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS schedules (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#7c3aed',
   collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE RESTRICT,
   starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, rrule TEXT, exdates TEXT NOT NULL DEFAULT '[]',
+  priority INTEGER NOT NULL DEFAULT 0, overlap_policy TEXT NOT NULL DEFAULT 'combine'
+    CHECK(overlap_policy IN ('combine','exclusive')),
   enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS trash (
@@ -64,6 +66,11 @@ class Database:
             if "color" not in columns:
                 db.execute("ALTER TABLE collections ADD COLUMN color TEXT NOT NULL DEFAULT '#7c3aed'")
                 db.execute("UPDATE collections SET color='#64748b' WHERE is_default=1")
+            schedule_columns = {row["name"] for row in db.execute("PRAGMA table_info(schedules)").fetchall()}
+            if "priority" not in schedule_columns:
+                db.execute("ALTER TABLE schedules ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+            if "overlap_policy" not in schedule_columns:
+                db.execute("ALTER TABLE schedules ADD COLUMN overlap_policy TEXT NOT NULL DEFAULT 'combine'")
             db.execute(
                 "INSERT OR IGNORE INTO collections(name,color,is_default,created_at) VALUES(?,?,?,?)",
                 ("Default", "#64748b", 1, datetime.now(UTC).isoformat()),

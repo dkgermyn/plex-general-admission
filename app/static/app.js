@@ -157,15 +157,32 @@ $('[data-member-search]')?.addEventListener('input', event => {
   const query = event.target.value.trim().toLocaleLowerCase();
   $$('[data-choice-name]', $('#add-members-dialog')).forEach(choice => { choice.hidden = !choice.dataset.choiceName.includes(query); });
 });
-$$('[data-edit-schedule]').forEach(button => button.addEventListener('click', () => {
-  const schedule = JSON.parse(button.dataset.schedule), dialog = $('#edit-schedule-dialog'), form = $('form', dialog);
+const openScheduleEditor = schedule => {
+  const dialog = $('#edit-schedule-dialog'), form = $('form', dialog);
   form.action = `/schedules/${schedule.id}/edit`;
-  ['name', 'collection_id', 'starts_at', 'ends_at', 'rrule', 'color'].forEach(name => { if (form.elements[name]) form.elements[name].value = schedule[name] || ''; });
+  ['name', 'collection_id', 'starts_at', 'ends_at', 'rrule', 'color', 'priority', 'overlap_policy'].forEach(name => { if (form.elements[name]) form.elements[name].value = schedule[name] ?? ''; });
   const recurrence = $('[data-recurrence]', form), presets = ['', 'FREQ=DAILY', 'FREQ=WEEKLY', 'FREQ=MONTHLY', 'FREQ=YEARLY'];
   recurrence.value = presets.includes(schedule.rrule || '') ? (schedule.rrule || '') : 'custom';
   updateRecurrence(recurrence); updateColor($('[data-color-control]', form));
   dialog.showModal();
-}));
+};
+$$('[data-edit-schedule]').forEach(button => button.addEventListener('click', () => openScheduleEditor(JSON.parse(button.dataset.schedule))));
+
+const inspector = $('[data-play-inspector]');
+if (inspector) {
+  const form = $('[data-inspector-form]', inspector), at = form.elements.at;
+  const renderInspection = result => {
+    $('[data-inspector-explanation]', inspector).textContent = result.explanation;
+    $('[data-inspector-count]', inspector).textContent = `${result.paths.length} eligible video${result.paths.length === 1 ? '' : 's'}`;
+    const schedules = $('[data-inspector-schedules]', inspector); schedules.innerHTML = '';
+    result.schedules.forEach(item => { const pill = document.createElement('span'); pill.className = `pill${item.selected ? '' : ' muted-pill'}`; pill.textContent = `${item.name} · P${item.priority} · ${item.reason}`; schedules.appendChild(pill); });
+    const warning = $('[data-inspector-empty]', inspector); warning.hidden = result.empty_collections.length === 0;
+    $('span', warning).textContent = result.empty_collections.join(', ');
+  };
+  const inspect = async value => renderInspection(await fetch(`/api/inspect${value ? `?at=${encodeURIComponent(value)}` : ''}`).then(response => response.json()));
+  form.addEventListener('submit', event => { event.preventDefault(); inspect(at.value); });
+  $('[data-inspect-now]', inspector).addEventListener('click', () => { at.value = ''; inspect(''); });
+}
 
 const zoneSelect = $('[data-timezone-select]'), zoneClock = $('[data-zone-clock]');
 const updateZonePreview = () => {
@@ -349,20 +366,86 @@ if (explorer) {
 
 const calendarGrid = $('[data-calendar-grid]');
 if (calendarGrid) {
-  let shown = new Date();
+  let shown = new Date(), selectionStart = null, resizing = null, resizeTarget = null;
+  const pad = value => String(value).padStart(2, '0');
+  const dateValue = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const dateTimeValue = date => `${dateValue(date)}T00:00`;
+  const dateFromValue = value => { const [year, month, day] = value.split('-').map(Number); return new Date(year, month - 1, day); };
+  const highlightSelection = end => {
+    if (!selectionStart) return;
+    const low = selectionStart < end ? selectionStart : end, high = selectionStart < end ? end : selectionStart;
+    $$('[data-calendar-date]', calendarGrid).forEach(cell => cell.classList.toggle('selecting', cell.dataset.calendarDate >= low && cell.dataset.calendarDate <= high));
+  };
+  const createFromSelection = end => {
+    const low = selectionStart < end ? selectionStart : end, high = selectionStart < end ? end : selectionStart;
+    const start = dateFromValue(low), finish = dateFromValue(high); finish.setDate(finish.getDate() + 1);
+    const form = $('[data-new-schedule]'); form.elements.starts_at.value = dateTimeValue(start); form.elements.ends_at.value = dateTimeValue(finish);
+    $('[data-calendar-selection]').textContent = `Selected ${low} through ${high}; the end is exclusive.`;
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' }); form.elements.name.focus();
+    selectionStart = null; $$('[data-calendar-date]', calendarGrid).forEach(cell => cell.classList.remove('selecting'));
+  };
+  const resizeTo = async date => {
+    const schedule = resizing.schedule, chosen = dateFromValue(date), start = schedule.starts_at.slice(0, 16), end = schedule.ends_at.slice(0, 16);
+    let nextStart = start, nextEnd = end;
+    if (resizing.edge === 'start') nextStart = `${dateValue(chosen)}T${start.slice(11)}`;
+    else { chosen.setDate(chosen.getDate() + 1); nextEnd = `${dateValue(chosen)}T${end.slice(11)}`; }
+    const data = new FormData(); data.set('csrf_token', $('[data-new-schedule] [name="csrf_token"]').value); data.set('starts_at', nextStart); data.set('ends_at', nextEnd);
+    const response = await fetch(`/schedules/${schedule.id}/bounds`, { method: 'POST', body: data });
+    resizing = null;
+    if (!response.ok) { alert((await response.json()).detail || 'Could not resize schedule'); return; }
+    await render();
+  };
+  document.addEventListener('pointermove', event => {
+    if (!resizing) return;
+    const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-calendar-date]');
+    if (cell) resizeTarget = cell.dataset.calendarDate;
+  });
+  document.addEventListener('pointerup', () => { if (resizing && resizeTarget) resizeTo(resizeTarget); });
   const render = async () => {
     const year = shown.getFullYear(), month = shown.getMonth();
     const result = await fetch(`/api/calendar?year=${year}&month=${month + 1}`).then(response => response.json()), events = result.events;
     const first = new Date(year, month, 1), last = new Date(year, month + 1, 0);
     $('[data-calendar-title]').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); calendarGrid.innerHTML = '';
-    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => calendarGrid.insertAdjacentHTML('beforeend', `<b>${day}</b>`));
-    for (let index = 0; index < first.getDay(); index += 1) calendarGrid.insertAdjacentHTML('beforeend', '<div></div>');
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((day, index) => { const heading = document.createElement('b'); heading.textContent = day; heading.style.gridColumn = index + 1; heading.style.gridRow = 1; calendarGrid.appendChild(heading); });
     $('[data-calendar-zone]').textContent = result.timezone;
-    for (let day = 1; day <= last.getDate(); day += 1) {
-      const cell = document.createElement('div'), number = document.createElement('span'); number.textContent = day; cell.appendChild(number);
-      events.forEach(event => { if (event.days.includes(day)) { const label = document.createElement('small'); label.style.setProperty('--event', event.color); label.title = event.name; label.textContent = event.name; cell.appendChild(label); } });
+    const weekCount = Math.ceil((first.getDay() + last.getDate()) / 7), cellsByWeek = Array.from({ length: weekCount }, () => []);
+    for (let slot = 0; slot < weekCount * 7; slot += 1) {
+      const week = Math.floor(slot / 7), column = slot % 7, day = slot - first.getDay() + 1, cell = document.createElement('div');
+      cell.style.gridColumn = column + 1; cell.style.gridRow = week + 2; cellsByWeek[week].push(cell);
+      if (day < 1 || day > last.getDate()) { cell.className = 'calendar-outside'; calendarGrid.appendChild(cell); continue; }
+      const number = document.createElement('span'), date = new Date(year, month, day); number.textContent = day; cell.appendChild(number); cell.dataset.calendarDate = dateValue(date);
+      const status = result.day_status[String(day)]; if (status?.conflict) cell.classList.add('has-conflict'); if (status?.exclusive_cutoff !== null) cell.classList.add('has-exclusive');
+      cell.addEventListener('pointerdown', event => { if (event.target.closest('.calendar-event')) return; selectionStart = cell.dataset.calendarDate; highlightSelection(selectionStart); });
+      cell.addEventListener('pointerenter', () => { if (resizing) resizeTarget = cell.dataset.calendarDate; else highlightSelection(cell.dataset.calendarDate); });
+      cell.addEventListener('pointerup', () => { if (!resizing && selectionStart) createFromSelection(cell.dataset.calendarDate); });
       calendarGrid.appendChild(cell);
     }
+    const segments = [];
+    events.forEach(schedule => {
+      let current = null;
+      schedule.days.forEach(day => {
+        const position = first.getDay() + day - 1, week = Math.floor(position / 7), column = position % 7;
+        if (!current || current.week !== week || day !== current.endDay + 1) { current = { schedule, week, startColumn: column, endColumn: column, startDay: day, endDay: day }; segments.push(current); }
+        else { current.endColumn = column; current.endDay = day; }
+      });
+    });
+    const lanes = Array.from({ length: weekCount }, () => []), laneCounts = Array(weekCount).fill(0);
+    segments.sort((left, right) => left.week - right.week || left.startColumn - right.startColumn || right.endColumn - left.endColumn).forEach(segment => {
+      const weekLanes = lanes[segment.week]; let lane = weekLanes.findIndex(items => items.every(item => segment.endColumn < item.startColumn || segment.startColumn > item.endColumn));
+      if (lane < 0) { lane = weekLanes.length; weekLanes.push([]); }
+      weekLanes[lane].push(segment); laneCounts[segment.week] = Math.max(laneCounts[segment.week], lane + 1); segment.lane = lane;
+    });
+    cellsByWeek.forEach((cells, week) => cells.forEach(cell => { cell.style.minHeight = `${Math.max(78, 40 + laneCounts[week] * 25)}px`; }));
+    segments.forEach(segment => {
+      const schedule = segment.schedule, label = document.createElement('button'); label.type = 'button'; label.className = 'calendar-event calendar-event-span';
+      label.style.setProperty('--event', schedule.color); label.style.gridColumn = `${segment.startColumn + 1} / span ${segment.endColumn - segment.startColumn + 1}`; label.style.gridRow = segment.week + 2; label.style.setProperty('--event-lane', segment.lane);
+      label.title = `${schedule.name} · ${schedule.collection_name} · Priority ${schedule.priority} · ${schedule.overlap_policy}`; label.textContent = schedule.name; label.addEventListener('click', event => { if (!event.target.closest('.event-handle')) openScheduleEditor(schedule); });
+      const startsHere = !schedule.rrule && schedule.start_day === segment.startDay, endsHere = !schedule.rrule && schedule.end_day === segment.endDay;
+      if (segment.startDay !== schedule.days[0]) label.classList.add('continues-before'); if (segment.endDay !== schedule.days.at(-1)) label.classList.add('continues-after');
+      if (startsHere) { const handle = document.createElement('span'); handle.className = 'event-handle start'; handle.title = 'Drag start'; handle.textContent = '↤'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'start' }; resizeTarget = dateValue(new Date(year, month, segment.startDay)); }); label.prepend(handle); }
+      if (endsHere) { const handle = document.createElement('span'); handle.className = 'event-handle end'; handle.title = 'Drag end'; handle.textContent = '↦'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'end' }; resizeTarget = dateValue(new Date(year, month, segment.endDay)); }); label.append(handle); }
+      if (!schedule.video_count) label.classList.add('empty-event'); calendarGrid.appendChild(label);
+    });
   };
   $('[data-calendar-prev]').onclick = () => { shown = new Date(shown.getFullYear(), shown.getMonth() - 1, 1); render(); };
   $('[data-calendar-next]').onclick = () => { shown = new Date(shown.getFullYear(), shown.getMonth() + 1, 1); render(); };
