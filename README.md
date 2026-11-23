@@ -5,7 +5,22 @@ organizing, previewing, uploading, and scheduling Plex pre-roll videos. Video
 previews stop and release playback whenever they are closed or the page is left,
 including mobile browser navigation and backgrounding.
 
-![Plex General Ad-mission interface demo](assets/demo.gif)
+## Interface tour
+
+| Library | Collections |
+| --- | --- |
+| ![Library browser with folders, thumbnails, search, sorting, and view controls](assets/screenshots/library.png) | ![Collection manager with membership and colour controls](assets/screenshots/collections.png) |
+
+| Scheduling | Mobile selection |
+| --- | --- |
+| ![Calendar with continuous multi-day schedule bars and playback inspector](assets/screenshots/schedule.png) | ![Touch-friendly mobile library selection](assets/screenshots/mobile.png) |
+
+### Create a schedule
+
+The focused example below selects dates, fills the new schedule form, and shows
+the resulting event on the calendar.
+
+![Creating a new schedule and seeing it appear on the calendar](assets/schedule-flow.gif)
 
 ## Features
 
