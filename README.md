@@ -20,7 +20,7 @@ including mobile browser navigation and backgrounding.
 - See matching colour-coded collection tags on Library videos and filter by a collection or by unassigned videos.
 - Schedule one-time, daily, weekly, monthly, annual, or custom recurring windows in an application timezone chosen in Settings.
 - Preview schedule and collection colours before saving, with readable high-contrast labels.
-- Edit schedules in place and see every active day of multi-day and recurring windows on the calendar.
+- Edit schedules in place and see multi-day and recurring windows as continuous calendar bars that wrap across weeks.
 - Drag across calendar days to create schedules, click events to edit them, and resize one-time schedule boundaries.
 - Inspect what will play now or at a future date, including eligible-video counts and empty-collection warnings.
 - Explain overlapping schedules with priorities and Combine or Exclusive resolution policies.

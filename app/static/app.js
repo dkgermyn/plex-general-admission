@@ -406,21 +406,46 @@ if (calendarGrid) {
     const result = await fetch(`/api/calendar?year=${year}&month=${month + 1}`).then(response => response.json()), events = result.events;
     const first = new Date(year, month, 1), last = new Date(year, month + 1, 0);
     $('[data-calendar-title]').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); calendarGrid.innerHTML = '';
-    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => calendarGrid.insertAdjacentHTML('beforeend', `<b>${day}</b>`));
-    for (let index = 0; index < first.getDay(); index += 1) calendarGrid.insertAdjacentHTML('beforeend', '<div></div>');
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((day, index) => { const heading = document.createElement('b'); heading.textContent = day; heading.style.gridColumn = index + 1; heading.style.gridRow = 1; calendarGrid.appendChild(heading); });
     $('[data-calendar-zone]').textContent = result.timezone;
-    for (let day = 1; day <= last.getDate(); day += 1) {
-      const cell = document.createElement('div'), number = document.createElement('span'), date = new Date(year, month, day); number.textContent = day; cell.appendChild(number); cell.dataset.calendarDate = dateValue(date);
+    const weekCount = Math.ceil((first.getDay() + last.getDate()) / 7), cellsByWeek = Array.from({ length: weekCount }, () => []);
+    for (let slot = 0; slot < weekCount * 7; slot += 1) {
+      const week = Math.floor(slot / 7), column = slot % 7, day = slot - first.getDay() + 1, cell = document.createElement('div');
+      cell.style.gridColumn = column + 1; cell.style.gridRow = week + 2; cellsByWeek[week].push(cell);
+      if (day < 1 || day > last.getDate()) { cell.className = 'calendar-outside'; calendarGrid.appendChild(cell); continue; }
+      const number = document.createElement('span'), date = new Date(year, month, day); number.textContent = day; cell.appendChild(number); cell.dataset.calendarDate = dateValue(date);
       const status = result.day_status[String(day)]; if (status?.conflict) cell.classList.add('has-conflict'); if (status?.exclusive_cutoff !== null) cell.classList.add('has-exclusive');
       cell.addEventListener('pointerdown', event => { if (event.target.closest('.calendar-event')) return; selectionStart = cell.dataset.calendarDate; highlightSelection(selectionStart); });
       cell.addEventListener('pointerenter', () => { if (resizing) resizeTarget = cell.dataset.calendarDate; else highlightSelection(cell.dataset.calendarDate); });
       cell.addEventListener('pointerup', () => { if (!resizing && selectionStart) createFromSelection(cell.dataset.calendarDate); });
-      events.forEach(schedule => { if (!schedule.days.includes(day)) return; const label = document.createElement('button'); label.type = 'button'; label.className = 'calendar-event'; label.style.setProperty('--event', schedule.color); label.title = `${schedule.name} · ${schedule.collection_name} · Priority ${schedule.priority} · ${schedule.overlap_policy}`; label.textContent = schedule.name; label.addEventListener('click', event => { if (!event.target.closest('.event-handle')) openScheduleEditor(schedule); });
-        if (!schedule.rrule && day === schedule.start_day) { const handle = document.createElement('span'); handle.className = 'event-handle start'; handle.title = 'Drag start'; handle.textContent = '↤'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'start' }; resizeTarget = cell.dataset.calendarDate; }); label.prepend(handle); }
-        if (!schedule.rrule && day === schedule.end_day) { const handle = document.createElement('span'); handle.className = 'event-handle end'; handle.title = 'Drag end'; handle.textContent = '↦'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'end' }; resizeTarget = cell.dataset.calendarDate; }); label.append(handle); }
-        if (!schedule.video_count) label.classList.add('empty-event'); cell.appendChild(label); });
       calendarGrid.appendChild(cell);
     }
+    const segments = [];
+    events.forEach(schedule => {
+      let current = null;
+      schedule.days.forEach(day => {
+        const position = first.getDay() + day - 1, week = Math.floor(position / 7), column = position % 7;
+        if (!current || current.week !== week || day !== current.endDay + 1) { current = { schedule, week, startColumn: column, endColumn: column, startDay: day, endDay: day }; segments.push(current); }
+        else { current.endColumn = column; current.endDay = day; }
+      });
+    });
+    const lanes = Array.from({ length: weekCount }, () => []), laneCounts = Array(weekCount).fill(0);
+    segments.sort((left, right) => left.week - right.week || left.startColumn - right.startColumn || right.endColumn - left.endColumn).forEach(segment => {
+      const weekLanes = lanes[segment.week]; let lane = weekLanes.findIndex(items => items.every(item => segment.endColumn < item.startColumn || segment.startColumn > item.endColumn));
+      if (lane < 0) { lane = weekLanes.length; weekLanes.push([]); }
+      weekLanes[lane].push(segment); laneCounts[segment.week] = Math.max(laneCounts[segment.week], lane + 1); segment.lane = lane;
+    });
+    cellsByWeek.forEach((cells, week) => cells.forEach(cell => { cell.style.minHeight = `${Math.max(78, 40 + laneCounts[week] * 25)}px`; }));
+    segments.forEach(segment => {
+      const schedule = segment.schedule, label = document.createElement('button'); label.type = 'button'; label.className = 'calendar-event calendar-event-span';
+      label.style.setProperty('--event', schedule.color); label.style.gridColumn = `${segment.startColumn + 1} / span ${segment.endColumn - segment.startColumn + 1}`; label.style.gridRow = segment.week + 2; label.style.setProperty('--event-lane', segment.lane);
+      label.title = `${schedule.name} · ${schedule.collection_name} · Priority ${schedule.priority} · ${schedule.overlap_policy}`; label.textContent = schedule.name; label.addEventListener('click', event => { if (!event.target.closest('.event-handle')) openScheduleEditor(schedule); });
+      const startsHere = !schedule.rrule && schedule.start_day === segment.startDay, endsHere = !schedule.rrule && schedule.end_day === segment.endDay;
+      if (segment.startDay !== schedule.days[0]) label.classList.add('continues-before'); if (segment.endDay !== schedule.days.at(-1)) label.classList.add('continues-after');
+      if (startsHere) { const handle = document.createElement('span'); handle.className = 'event-handle start'; handle.title = 'Drag start'; handle.textContent = '↤'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'start' }; resizeTarget = dateValue(new Date(year, month, segment.startDay)); }); label.prepend(handle); }
+      if (endsHere) { const handle = document.createElement('span'); handle.className = 'event-handle end'; handle.title = 'Drag end'; handle.textContent = '↦'; handle.addEventListener('pointerdown', event => { event.stopPropagation(); resizing = { schedule, edge: 'end' }; resizeTarget = dateValue(new Date(year, month, segment.endDay)); }); label.append(handle); }
+      if (!schedule.video_count) label.classList.add('empty-event'); calendarGrid.appendChild(label);
+    });
   };
   $('[data-calendar-prev]').onclick = () => { shown = new Date(shown.getFullYear(), shown.getMonth() - 1, 1); render(); };
   $('[data-calendar-next]').onclick = () => { shown = new Date(shown.getFullYear(), shown.getMonth() + 1, 1); render(); };

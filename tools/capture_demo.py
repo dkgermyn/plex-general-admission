@@ -51,6 +51,11 @@ async def main() -> None:
         await page.wait_for_timeout(900)
         await page.locator('[data-calendar-next]').click()
         await expect(page.locator('[data-calendar-title]')).to_have_text("December 2026")
+        christmas_bars = page.locator('.calendar-event-span:has-text("Christmas")')
+        await expect(christmas_bars).to_have_count(5)
+        bar_box = await christmas_bars.first.bounding_box()
+        day_box = await page.locator('[data-calendar-date="2026-12-01"]').bounding_box()
+        assert bar_box["width"] > day_box["width"] * 4.5
         start_cell = page.locator('[data-calendar-date="2026-12-24"]')
         end_cell = page.locator('[data-calendar-date="2026-12-26"]')
         start_box, end_box = await start_cell.bounding_box(), await end_cell.bounding_box()

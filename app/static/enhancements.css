@@ -69,11 +69,15 @@
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
 .calendar-grid > * { border-left: 1px solid var(--line); border-top: 1px solid var(--line); min-height: 78px; padding: .4rem; }
 .calendar-grid > b { color: var(--muted); min-height: auto; text-align: center; }
+.calendar-outside { background: #111116; }
 .calendar-grid [data-calendar-date] { cursor: crosshair; position: relative; }
 .calendar-grid [data-calendar-date].selecting { background: #7c3aed30; box-shadow: inset 0 0 0 2px #9f7aea; }
 .calendar-grid [data-calendar-date].has-conflict::after { background: #f59e0b; border-radius: 50%; content: ''; height: 7px; position: absolute; right: 6px; top: 6px; width: 7px; }
 .calendar-grid [data-calendar-date].has-exclusive { box-shadow: inset 3px 0 #ef4444; }
-.calendar-event { background: color-mix(in srgb, var(--event) 30%, #17171d); border: 0; border-left: 3px solid var(--event); border-radius: .2rem; color: var(--text); display: flex; font-size: .72rem; gap: .2rem; justify-content: space-between; margin-top: .3rem; overflow: hidden; padding: .2rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.calendar-event { background: color-mix(in srgb, var(--event) 38%, #17171d); border: 0; border-left: 3px solid var(--event); border-radius: .3rem; color: var(--text); display: flex; font-size: .72rem; gap: .2rem; justify-content: space-between; overflow: hidden; padding: .2rem .35rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-grid > .calendar-event-span { align-self: start; height: 22px; margin: calc(27px + var(--event-lane) * 25px) 2px 0; min-height: 0; position: relative; width: auto; z-index: 2; }
+.calendar-event-span.continues-before { border-bottom-left-radius: 0; border-left-width: 0; border-top-left-radius: 0; }
+.calendar-event-span.continues-after { border-bottom-right-radius: 0; border-top-right-radius: 0; }
 .calendar-event:hover { filter: brightness(1.2); }
 .calendar-event.empty-event { outline: 1px dashed #f59e0b; }
 .event-handle { cursor: ew-resize; flex: 0 0 auto; font-weight: 900; }

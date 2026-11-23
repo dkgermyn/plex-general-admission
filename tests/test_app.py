@@ -66,6 +66,8 @@ def test_v07_schedule_intelligence_ui_is_present():
     assert 'name="overlap_policy"' in template
     assert 'name="priority"' in template
     assert "createFromSelection" in script
+    assert "calendar-event-span" in script
+    assert "laneCounts" in script
     assert "/bounds" in script
     assert "openScheduleEditor(schedule)" in script
 
